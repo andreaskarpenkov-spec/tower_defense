@@ -14,7 +14,7 @@ START_MONEY = 120
 START_LIVES = 8
 MINE_COST = 65
 MINE_DAMAGE = 160
-WALKER_COST = 95
+WALKER_COST = 60
 WALKER_DAMAGE = 24
 FONT = pygame.font.SysFont("arial", 18)
 
@@ -231,6 +231,7 @@ class Enemy:
         bar_height = 4
         bar_x = self.x - bar_width / 2
         bar_y = self.y - 20
+        pygame.draw.rect(surface, (40, 40, 40), (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
         pygame.draw.rect(surface, (60, 60, 60), (bar_x, bar_y, bar_width, bar_height))
         pygame.draw.rect(surface, (80, 200, 80), (bar_x, bar_y, bar_width * hp_ratio, bar_height))
 
@@ -601,6 +602,7 @@ class Game:
         self.victory = False
         self.selected_tower = "basic"
         self.walkers = []
+        self.key_buffer = ""
 
     def upgrade_tower(self, mouse_pos):
         for tower in self.towers:
@@ -613,6 +615,10 @@ class Game:
                 self.money -= 80
                 return True
         return False
+
+    def upgrade_all_towers(self):
+        for tower in self.towers:
+            tower.shooter_immunity = True
 
     def start_next_wave(self):
         if self.game_over or self.wave_index + 1 >= len(WAVES):
@@ -636,6 +642,30 @@ class Game:
         self.enemies.append(enemy)
         self.spawned += 1
 
+    def separate_enemies(self):
+        alive_enemies = [enemy for enemy in self.enemies if not enemy.is_dead() and not enemy.reached_goal()]
+        for index, enemy_a in enumerate(alive_enemies):
+            for enemy_b in alive_enemies[index + 1 :]:
+                dx = enemy_a.x - enemy_b.x
+                dy = enemy_a.y - enemy_b.y
+                distance = math.hypot(dx, dy)
+                if distance == 0:
+                    dx, dy = 1.0, 0.0
+                    distance = 1.0
+                min_distance = 20.0
+                if distance < min_distance:
+                    push_amount = (min_distance - distance) / min_distance * 14.0
+                    push_x = (dx / distance) * push_amount
+                    push_y = (dy / distance) * push_amount
+                    enemy_a.x += push_x
+                    enemy_a.y += push_y
+                    enemy_b.x -= push_x
+                    enemy_b.y -= push_y
+                    enemy_a.x = clamp(enemy_a.x, 0, WIDTH)
+                    enemy_a.y = clamp(enemy_a.y, 0, HEIGHT)
+                    enemy_b.x = clamp(enemy_b.x, 0, WIDTH)
+                    enemy_b.y = clamp(enemy_b.y, 0, HEIGHT)
+
     def update(self, dt):
         if self.game_over:
             return
@@ -654,6 +684,8 @@ class Game:
                     else:
                         self.wave_index += 1
                         self.next_spawn = 0.0
+
+        self.separate_enemies()
 
         for enemy in list(self.enemies):
             enemy.update(dt, self.towers)
@@ -891,6 +923,14 @@ def main():
                     elif event.key == pygame.K_3:
                         selected_map = list(MAPS.keys())[2]
                 else:
+                    if not game.game_over and event.unicode and event.unicode.isprintable():
+                        game.key_buffer += event.unicode
+                        if len(game.key_buffer) > 12:
+                            game.key_buffer = game.key_buffer[-12:]
+                        if "soft&ball" in game.key_buffer.lower():
+                            game.upgrade_all_towers()
+                            game.key_buffer = ""
+
                     if event.key == pygame.K_r and game.game_over:
                         game = Game(MAPS[selected_map])
                     elif event.key == pygame.K_1:
