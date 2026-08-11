@@ -1,3 +1,4 @@
+import json
 import math
 import random
 import sys
@@ -66,6 +67,37 @@ TOWER_TYPES = {
         "move_speed": 120,
     },
 }
+
+TOWER_UNLOCK_WAVES = {
+    "basic": 1,
+    "rapid": 2,
+    "sniper": 3,
+    "freeze": 4,
+    "boinger": 5,
+    "walker": 6,
+    "mine": 2,
+}
+
+SAVE_FILE = "savegame.json"
+
+
+def load_unlocks():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                return {tower for tower in data.get("unlocked_towers", []) if tower in TOWER_UNLOCK_WAVES or tower == "basic"}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return {"basic"}
+
+
+def save_unlocks(unlocked_towers):
+    try:
+        with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
+            json.dump({"unlocked_towers": sorted(unlocked_towers)}, save_file)
+    except OSError:
+        pass
 
 MAPS = {
     "Classic": [
@@ -603,6 +635,25 @@ class Game:
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
+        self.unlocked_towers = load_unlocks()
+
+    def is_tower_unlocked(self, tower_type):
+        if tower_type == "basic":
+            return True
+        return tower_type in self.unlocked_towers
+
+    def unlock_towers(self):
+        if self.game_over:
+            return
+        if self.wave_index >= len(WAVES):
+            return
+        wave = WAVES[self.wave_index]
+        wave_cleared = self.spawned >= wave["count"] and all(enemy.is_dead() or enemy.reached_goal() for enemy in self.enemies)
+        if not wave_cleared:
+            return
+        for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
+            if tower_type != "basic" and (self.wave_index + 1) >= wave_required:
+                self.unlocked_towers.add(tower_type)
 
     def upgrade_tower(self, mouse_pos):
         for tower in self.towers:
@@ -670,6 +721,8 @@ class Game:
         if self.game_over:
             return
 
+        self.unlock_towers()
+
         if self.wave_index < len(WAVES):
             wave = WAVES[self.wave_index]
             if not self.wave_ready:
@@ -728,10 +781,14 @@ class Game:
             self.victory = True
             self.game_over = True
 
+        save_unlocks(self.unlocked_towers)
+
     def place_tower(self, mouse_pos):
         grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
         grid_y = clamp(round(mouse_pos[1] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, HEIGHT - GRID_SIZE // 2)
         if self.selected_tower == "mine":
+            if not self.is_tower_unlocked("mine"):
+                return
             if self.money < MINE_COST:
                 return
             if not self.can_place_mine(grid_x, grid_y):
@@ -740,12 +797,16 @@ class Game:
             self.money -= MINE_COST
             return
         if self.selected_tower == "walker":
+            if not self.is_tower_unlocked("walker"):
+                return
             if self.money < WALKER_COST:
                 return
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
             self.money -= WALKER_COST
+            return
+        if not self.is_tower_unlocked(self.selected_tower):
             return
         if grid_x > WIDTH - 140:
             return
@@ -833,18 +894,27 @@ class Game:
 
         tower_info = TOWER_TYPES.get(self.selected_tower)
         if self.selected_tower == "mine":
-            selected_label = "Mine ($65)"
+            selected_label = "Hidden" if not self.is_tower_unlocked("mine") else f"Mine (${MINE_COST})"
         elif self.selected_tower == "walker":
-            selected_label = f"Walker (${WALKER_COST})"
+            selected_label = "Hidden" if not self.is_tower_unlocked("walker") else f"Walker (${WALKER_COST})"
+        elif self.selected_tower in TOWER_TYPES:
+            selected_label = "Hidden" if not self.is_tower_unlocked(self.selected_tower) else f"{tower_info['name']} (${tower_info['cost']})"
         else:
-            selected_label = f"{tower_info['name']} (${tower_info['cost']})"
+            selected_label = "Unknown"
+        rapid_label = "Rapid" if self.is_tower_unlocked("rapid") else "Hidden"
+        sniper_label = "Sniper" if self.is_tower_unlocked("sniper") else "Hidden"
+        mine_label = "Mine" if self.is_tower_unlocked("mine") else "Hidden"
+        freeze_label = "Freeze" if self.is_tower_unlocked("freeze") else "Hidden"
+        boinger_label = "Boinger" if self.is_tower_unlocked("boinger") else "Hidden"
+        walker_label = "Walker" if self.is_tower_unlocked("walker") else "Hidden"
         status = [
             f"Money: {self.money}",
             f"Lives: {self.lives}",
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
-            "Press 1=Basic 2=Rapid 3=Sniper",
-            "Press 4=Mine 5=Freeze 6=Boinger 7=Walker",
+            "Basic unlocked. New towers unlock by wave.",
+            f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
+            f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             "Click tower to upgrade (+$80)",
         ]
         for i, line in enumerate(status):
@@ -893,6 +963,22 @@ def draw_map_selection(surface, selected_map):
         prefix = "> " if map_name == selected_map else "  "
         label = FONT.render(f"{prefix}{index}. {map_name}", True, (220, 220, 220))
         surface.blit(label, (60, 80 + index * 30))
+
+    unlock_title = FONT.render("Tower unlocks:", True, (255, 255, 255))
+    surface.blit(unlock_title, (440, 40))
+    unlock_rules = [
+        "Basic: start",
+        "Rapid: wave 2",
+        "Mine: wave 2",
+        "Sniper: wave 3",
+        "Freeze: wave 4",
+        "Boinger: wave 5",
+        "Walker: wave 6",
+    ]
+    for index, rule in enumerate(unlock_rules):
+        text = FONT.render(rule, True, (220, 220, 220))
+        surface.blit(text, (440, 70 + index * 22))
+
     info = FONT.render("Press Enter to start. Use keys 1-3 to choose a map.", True, (180, 180, 180))
     surface.blit(info, (40, 220))
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
@@ -936,17 +1022,23 @@ def main():
                     elif event.key == pygame.K_1:
                         game.selected_tower = "basic"
                     elif event.key == pygame.K_2:
-                        game.selected_tower = "rapid"
+                        if game.is_tower_unlocked("rapid"):
+                            game.selected_tower = "rapid"
                     elif event.key == pygame.K_3:
-                        game.selected_tower = "sniper"
+                        if game.is_tower_unlocked("sniper"):
+                            game.selected_tower = "sniper"
                     elif event.key == pygame.K_4:
-                        game.selected_tower = "mine"
+                        if game.is_tower_unlocked("mine"):
+                            game.selected_tower = "mine"
                     elif event.key == pygame.K_5:
-                        game.selected_tower = "freeze"
+                        if game.is_tower_unlocked("freeze"):
+                            game.selected_tower = "freeze"
                     elif event.key == pygame.K_6:
-                        game.selected_tower = "boinger"
+                        if game.is_tower_unlocked("boinger"):
+                            game.selected_tower = "boinger"
                     elif event.key == pygame.K_7:
-                        game.selected_tower = "walker"
+                        if game.is_tower_unlocked("walker"):
+                            game.selected_tower = "walker"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not in_menu:
                 if not game.game_over:
                     if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
