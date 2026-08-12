@@ -29,6 +29,15 @@ TOWER_TYPES = {
         "color": (40, 110, 200),
         "ring": (100, 180, 240),
     },
+    "mine_tower": {
+        "name": "Mine Tower",
+        "range": 170,
+        "cooldown": 1.2,
+        "damage": 30,
+        "cost": 140,
+        "color": (215, 150, 90),
+        "ring": (255, 210, 150),
+    },
     "rapid": {
         "name": "Rapid",
         "range": 110,
@@ -70,6 +79,7 @@ TOWER_TYPES = {
 
 TOWER_UNLOCK_WAVES = {
     "basic": 1,
+    "mine_tower": 99,
     "rapid": 2,
     "sniper": 3,
     "freeze": 4,
@@ -629,13 +639,23 @@ class Game:
         self.wave_delay = 2.0
         self.next_spawn = 0.0
         self.wave_ready = False
-        self.wave_button_rect = pygame.Rect(WIDTH - 250, 220, 220, 40)
+        self.wave_button_rect = pygame.Rect(WIDTH - 250, 260, 220, 40)
         self.game_over = False
         self.victory = False
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
         self.unlocked_towers = load_unlocks()
+        self.highest_cleared_wave = max(
+            (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
+            default=0,
+        )
+        self._apply_unlocks_from_progress()
+
+    def _apply_unlocks_from_progress(self):
+        for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
+            if tower_type != "basic" and self.highest_cleared_wave >= wave_required:
+                self.unlocked_towers.add(tower_type)
 
     def is_tower_unlocked(self, tower_type):
         if tower_type == "basic":
@@ -645,15 +665,30 @@ class Game:
     def unlock_towers(self):
         if self.game_over:
             return
+        self._apply_unlocks_from_progress()
+
+    def complete_wave_unlocks(self):
+        if self.game_over:
+            return
         if self.wave_index >= len(WAVES):
             return
         wave = WAVES[self.wave_index]
-        wave_cleared = self.spawned >= wave["count"] and all(enemy.is_dead() or enemy.reached_goal() for enemy in self.enemies)
-        if not wave_cleared:
+        if self.spawned < wave["count"]:
             return
-        for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
-            if tower_type != "basic" and (self.wave_index + 1) >= wave_required:
-                self.unlocked_towers.add(tower_type)
+        if not all(enemy.is_dead() or enemy.reached_goal() for enemy in self.enemies):
+            return
+        self.highest_cleared_wave = max(self.highest_cleared_wave, self.wave_index + 1)
+        self._apply_unlocks_from_progress()
+
+    def unlock_mine_tower_if_ready(self):
+        if self.is_tower_unlocked("mine_tower"):
+            return
+        for mine in self.mines:
+            above = any(tower.x == mine.x and tower.y == mine.y - GRID_SIZE for tower in self.towers)
+            below = any(tower.x == mine.x and tower.y == mine.y + GRID_SIZE for tower in self.towers)
+            if above and below:
+                self.unlocked_towers.add("mine_tower")
+                return
 
     def upgrade_tower(self, mouse_pos):
         for tower in self.towers:
@@ -732,6 +767,7 @@ class Game:
                     self.spawn_enemy()
                     self.next_spawn = 0.8
                 if self.spawned >= wave["count"] and all(e.is_dead() or e.reached_goal() for e in self.enemies):
+                    self.complete_wave_unlocks()
                     if self.wave_index + 1 < len(WAVES):
                         self.wave_ready = True
                     else:
@@ -817,6 +853,8 @@ class Game:
             return
         self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
         self.money -= tower_info["cost"]
+        if self.selected_tower == "basic":
+            self.unlock_mine_tower_if_ready()
 
     def can_place(self, x, y):
         for px, py in self.path_points:
@@ -917,6 +955,8 @@ class Game:
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             "Click tower to upgrade (+$80)",
         ]
+        if self.is_tower_unlocked("mine_tower"):
+            status.insert(-1, "Press 8=Mine Tower")
         for i, line in enumerate(status):
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 20 + i * 24))
@@ -1039,6 +1079,9 @@ def main():
                     elif event.key == pygame.K_7:
                         if game.is_tower_unlocked("walker"):
                             game.selected_tower = "walker"
+                    elif event.key == pygame.K_8:
+                        if game.is_tower_unlocked("mine_tower"):
+                            game.selected_tower = "mine_tower"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not in_menu:
                 if not game.game_over:
                     if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
