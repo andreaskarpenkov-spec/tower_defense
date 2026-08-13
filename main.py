@@ -29,6 +29,26 @@ TOWER_TYPES = {
         "color": (40, 110, 200),
         "ring": (100, 180, 240),
     },
+    "warden": {
+        "name": "Warden",
+        "range": 180,
+        "cooldown": 0.9,
+        "damage": 30,
+        "cost": 0,
+        "win_cost": 1,
+        "color": (130, 180, 110),
+        "ring": (180, 240, 160),
+    },
+    "nova": {
+        "name": "Nova",
+        "range": 200,
+        "cooldown": 1.3,
+        "damage": 48,
+        "cost": 0,
+        "win_cost": 2,
+        "color": (170, 110, 210),
+        "ring": (220, 160, 255),
+    },
     "mine_tower": {
         "name": "Mine Tower",
         "range": 170,
@@ -91,21 +111,34 @@ TOWER_UNLOCK_WAVES = {
 SAVE_FILE = "savegame.json"
 
 
-def load_unlocks():
+def load_progress():
     try:
         with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
             data = json.load(save_file)
             if isinstance(data, dict):
-                return {tower for tower in data.get("unlocked_towers", []) if tower in TOWER_UNLOCK_WAVES or tower == "basic"}
+                unlocked = {
+                    tower
+                    for tower in data.get("unlocked_towers", [])
+                    if tower in TOWER_UNLOCK_WAVES or tower == "basic"
+                }
+                win_coins = int(data.get("win_coins", 0) or 0)
+                if win_coins < 0:
+                    win_coins = 0
+                return unlocked, win_coins
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
-    return {"basic"}
+    return {"basic"}, 0
 
 
-def save_unlocks(unlocked_towers):
+def load_unlocks():
+    unlocked_towers, _ = load_progress()
+    return unlocked_towers
+
+
+def save_unlocks(unlocked_towers, win_coins=0):
     try:
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
-            json.dump({"unlocked_towers": sorted(unlocked_towers)}, save_file)
+            json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
     except OSError:
         pass
 
@@ -343,6 +376,8 @@ class Tower:
             self.time_since_shot = 0.0
             if self.type == "freeze":
                 return FreezeProjectile(self.x, self.y, nearest, self.damage, self.color)
+            if self.type == "mine_tower":
+                return BombProjectile(self.x, self.y, nearest, self.damage, self.color, enemies=enemies)
             return Projectile(self.x, self.y, nearest, self.damage, self.color)
         self.target = None
         return None
@@ -385,6 +420,31 @@ class Tower:
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
             pygame.draw.line(surface, (180, 240, 255), (base_x, base_y - 2), (barrel_end_x, barrel_end_y), 4)
             pygame.draw.circle(surface, (220, 250, 255), (base_x, base_y - 12), 5)
+        elif self.type == "warden":
+            pygame.draw.rect(surface, (25, 50, 25), (base_x - 12, base_y - 14, 24, 28))
+            pygame.draw.rect(surface, (100, 170, 90), (base_x - 10, base_y - 12, 20, 24))
+            pygame.draw.arc(surface, (170, 240, 160), (base_x - 16, base_y - 18, 32, 32), math.pi * 0.15, math.pi * 1.85, 3)
+            pygame.draw.line(surface, (200, 255, 200), (base_x, base_y - 14), (base_x + int(math.cos(self.aim_angle) * 18), base_y + int(math.sin(self.aim_angle) * 18)), 3)
+            pygame.draw.circle(surface, (200, 255, 200), (base_x, base_y - 16), 4)
+        elif self.type == "nova":
+            for i in range(4):
+                angle = self.aim_angle + i * (math.pi / 2)
+                ray_x = base_x + int(math.cos(angle) * 14)
+                ray_y = base_y + int(math.sin(angle) * 14)
+                pygame.draw.line(surface, (220, 170, 255), (base_x, base_y), (ray_x, ray_y), 2)
+            pygame.draw.circle(surface, (100, 60, 150), (base_x, base_y), 14)
+            pygame.draw.circle(surface, (220, 160, 255), (base_x, base_y), 9)
+            pygame.draw.circle(surface, (255, 240, 255), (base_x, base_y), 4)
+            barrel_end_x = base_x + int(math.cos(self.aim_angle) * 18)
+            barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
+            pygame.draw.line(surface, (255, 210, 255), (base_x, base_y), (barrel_end_x, barrel_end_y), 3)
+        elif self.type == "mine_tower":
+            pygame.draw.rect(surface, (90, 70, 50), (base_x - 10, base_y - 12, 20, 22))
+            pygame.draw.rect(surface, (150, 110, 70), (base_x - 8, base_y - 10, 16, 18))
+            barrel_end_x = base_x + int(math.cos(self.aim_angle) * 16)
+            barrel_end_y = base_y + int(math.sin(self.aim_angle) * 16)
+            pygame.draw.line(surface, (80, 60, 45), (base_x, base_y - 1), (barrel_end_x, barrel_end_y), 3)
+            pygame.draw.circle(surface, (255, 140, 70), (base_x + int(math.cos(self.aim_angle) * 10), base_y + int(math.sin(self.aim_angle) * 10)), 6)
         if self.type in ("flyer", "boinger"):
             pygame.draw.polygon(surface, (100, 200, 200), [
                 (base_x - 12, base_y),
@@ -520,6 +580,117 @@ class ShooterProjectile:
         pygame.draw.circle(surface, (255, 190, 120), (int(self.x), int(self.y)), 2)
 
 
+class Explosion:
+    def __init__(self, x, y, radius=52, damage=0, color=(255, 150, 80), duration=0.35):
+        self.x = x
+        self.y = y
+        self.radius = radius
+        self.damage = damage
+        self.color = color
+        self.duration = duration
+        self.time = 0.0
+        self.active = True
+
+    def update(self, dt):
+        self.time += dt
+        if self.time >= self.duration:
+            self.active = False
+            return False
+        return True
+
+    def draw(self, surface):
+        progress = min(self.time / max(self.duration, 0.001), 1.0)
+        glow_radius = int(self.radius * (0.2 + progress * 0.9))
+        alpha = max(0, 255 - int(progress * 230))
+        flash = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(flash, (self.color[0], self.color[1], self.color[2], alpha), (glow_radius, glow_radius), glow_radius)
+        surface.blit(flash, (self.x - glow_radius, self.y - glow_radius))
+        pygame.draw.circle(surface, (255, 220, 160), (int(self.x), int(self.y)), max(4, int(glow_radius * 0.18)))
+
+
+class BombProjectile:
+    def __init__(self, x, y, target, damage, color, speed=260, splash_radius=52, enemies=None):
+        self.x = x
+        self.y = y
+        self.target = target
+        self.damage = damage
+        self.color = color
+        self.speed = speed
+        self.splash_radius = splash_radius
+        self.enemies = enemies or []
+        self.active = True
+        self.explosion = None
+        self.trail = []
+        self.trail_timer = 0.0
+
+    def _apply_damage(self, enemy):
+        if enemy is None or enemy.is_dead() or enemy.reached_goal():
+            return
+        if hasattr(enemy, "health"):
+            enemy.health -= self.damage
+        else:
+            enemy.hp -= self.damage
+
+    def _explode(self):
+        if self.target is not None:
+            self._apply_damage(self.target)
+        for enemy in self.enemies:
+            if enemy is self.target:
+                continue
+            if enemy.is_dead() or enemy.reached_goal():
+                continue
+            if math.hypot(enemy.x - self.x, enemy.y - self.y) <= self.splash_radius:
+                damage = self.damage * 0.7
+                if hasattr(enemy, "health"):
+                    enemy.health -= damage
+                else:
+                    enemy.hp -= damage
+        self.explosion = Explosion(self.x, self.y, radius=self.splash_radius, damage=self.damage, color=(255, 140, 80))
+
+    def update(self, dt):
+        if not self.active or self.target is None or self.target.is_dead():
+            self.active = False
+            return False
+        if hasattr(self.target, "reached_goal") and self.target.reached_goal():
+            self.active = False
+            return False
+
+        self.trail_timer += dt
+        if self.trail_timer >= 0.05:
+            self.trail_timer = 0.0
+            self.trail.append((self.x, self.y))
+            if len(self.trail) > 8:
+                self.trail.pop(0)
+
+        dx = self.target.x - self.x
+        dy = self.target.y - self.y
+        distance = math.hypot(dx, dy)
+        if distance <= 10 or distance == 0:
+            self._explode()
+            self.active = False
+            return False
+
+        step = self.speed * dt
+        if step >= distance:
+            self.x, self.y = self.target.x, self.target.y
+            self._explode()
+            self.active = False
+            return False
+        self.x += dx / distance * step
+        self.y += dy / distance * step
+        return True
+
+    def draw(self, surface):
+        for i, (px, py) in enumerate(self.trail):
+            radius = max(2, 8 - i)
+            alpha = max(20, 120 - i * 12)
+            flame = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(flame, (255, 120, 40, alpha), (radius, radius), radius)
+            surface.blit(flame, (int(px) - radius, int(py) - radius))
+        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), 6)
+        pygame.draw.circle(surface, (255, 180, 120), (int(self.x), int(self.y)), 3)
+
+
 class Mine:
     def __init__(self, x, y):
         self.x = x
@@ -630,6 +801,7 @@ class Game:
         self.enemies = []
         self.towers = []
         self.projectiles = []
+        self.explosions = []
         self.mines = []
         self.money = START_MONEY
         self.lives = START_LIVES
@@ -645,11 +817,12 @@ class Game:
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
-        self.unlocked_towers = load_unlocks()
+        self.unlocked_towers, self.win_coins = load_progress()
         self.highest_cleared_wave = max(
             (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
             default=0,
         )
+        self.victory_coins_awarded = False
         self._apply_unlocks_from_progress()
 
     def _apply_unlocks_from_progress(self):
@@ -705,6 +878,13 @@ class Game:
     def upgrade_all_towers(self):
         for tower in self.towers:
             tower.shooter_immunity = True
+
+    def can_buy_win_tower(self, tower_type):
+        tower_info = TOWER_TYPES.get(tower_type, {})
+        win_cost = tower_info.get("win_cost", 0)
+        if win_cost <= 0:
+            return False
+        return self.win_coins >= win_cost
 
     def start_next_wave(self):
         if self.game_over or self.wave_index + 1 >= len(WAVES):
@@ -809,15 +989,24 @@ class Game:
 
         for projectile in list(self.projectiles):
             if not projectile.update(dt):
+                if getattr(projectile, "explosion", None) is not None:
+                    self.explosions.append(projectile.explosion)
                 self.projectiles.remove(projectile)
+
+        for explosion in list(self.explosions):
+            if not explosion.update(dt):
+                self.explosions.remove(explosion)
 
         if self.lives <= 0:
             self.game_over = True
         elif self.wave_index >= len(WAVES) and not self.enemies:
+            if not self.victory_coins_awarded:
+                self.win_coins += 5
+                self.victory_coins_awarded = True
             self.victory = True
             self.game_over = True
 
-        save_unlocks(self.unlocked_towers)
+        save_unlocks(self.unlocked_towers, self.win_coins)
 
     def place_tower(self, mouse_pos):
         grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
@@ -841,6 +1030,19 @@ class Game:
                 return
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
             self.money -= WALKER_COST
+            return
+        if self.selected_tower in TOWER_TYPES and TOWER_TYPES[self.selected_tower].get("win_cost"):
+            if not self.can_buy_win_tower(self.selected_tower):
+                return
+            if grid_x > WIDTH - 140:
+                return
+            if not self.can_place(grid_x, grid_y):
+                return
+            self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
+            self.win_coins -= TOWER_TYPES[self.selected_tower]["win_cost"]
+            if self.selected_tower == "basic":
+                self.unlock_mine_tower_if_ready()
+            save_unlocks(self.unlocked_towers, self.win_coins)
             return
         if not self.is_tower_unlocked(self.selected_tower):
             return
@@ -927,6 +1129,9 @@ class Game:
         for projectile in self.projectiles:
             projectile.draw(surface)
 
+        for explosion in self.explosions:
+            explosion.draw(surface)
+
         for enemy in self.enemies:
             enemy.draw(surface)
 
@@ -936,7 +1141,12 @@ class Game:
         elif self.selected_tower == "walker":
             selected_label = "Hidden" if not self.is_tower_unlocked("walker") else f"Walker (${WALKER_COST})"
         elif self.selected_tower in TOWER_TYPES:
-            selected_label = "Hidden" if not self.is_tower_unlocked(self.selected_tower) else f"{tower_info['name']} (${tower_info['cost']})"
+            if "win_cost" in tower_info:
+                selected_label = f"{tower_info['name']} ({tower_info['win_cost']} win)"
+            elif self.selected_tower == "mine_tower":
+                selected_label = f"Mine Tower (${TOWER_TYPES[self.selected_tower]['cost']})"
+            else:
+                selected_label = "Hidden" if not self.is_tower_unlocked(self.selected_tower) else f"{tower_info['name']} (${tower_info['cost']})"
         else:
             selected_label = "Unknown"
         rapid_label = "Rapid" if self.is_tower_unlocked("rapid") else "Hidden"
@@ -945,21 +1155,25 @@ class Game:
         freeze_label = "Freeze" if self.is_tower_unlocked("freeze") else "Hidden"
         boinger_label = "Boinger" if self.is_tower_unlocked("boinger") else "Hidden"
         walker_label = "Walker" if self.is_tower_unlocked("walker") else "Hidden"
+        mine_tower_label = "Mine Tower" if self.is_tower_unlocked("mine_tower") else "Hidden"
+        warden_label = "Warden" if self.win_coins >= 1 else "Hidden"
+        nova_label = "Nova" if self.win_coins >= 2 else "Hidden"
         status = [
             f"Money: {self.money}",
+            f"Win coins: {self.win_coins}",
             f"Lives: {self.lives}",
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
             "Basic unlocked. New towers unlock by wave.",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
+            f"Press 8={mine_tower_label} 9={warden_label}",
+            f"Press 0={nova_label}",
             "Click tower to upgrade (+$80)",
         ]
-        if self.is_tower_unlocked("mine_tower"):
-            status.insert(-1, "Press 8=Mine Tower")
         for i, line in enumerate(status):
             text = FONT.render(line, True, (240, 240, 240))
-            surface.blit(text, (WIDTH - 20 - text.get_width(), 20 + i * 24))
+            surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
 
         button_color = (70, 130, 190) if self.wave_index + 1 < len(WAVES) else (90, 90, 90)
         border_color = (170, 210, 255) if self.wave_index + 1 < len(WAVES) else (130, 130, 130)
@@ -1082,6 +1296,12 @@ def main():
                     elif event.key == pygame.K_8:
                         if game.is_tower_unlocked("mine_tower"):
                             game.selected_tower = "mine_tower"
+                    elif event.key == pygame.K_9:
+                        if game.can_buy_win_tower("warden"):
+                            game.selected_tower = "warden"
+                    elif event.key == pygame.K_0:
+                        if game.can_buy_win_tower("nova"):
+                            game.selected_tower = "nova"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not in_menu:
                 if not game.game_over:
                     if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
