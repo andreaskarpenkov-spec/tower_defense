@@ -20,6 +20,8 @@ python main.py
 
 - Left-click to place a tower.
 - Press `R` to restart after game over.
+- unlock new towers
+- can you get the secret tower?
 
 ## Goal
 
