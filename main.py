@@ -18,6 +18,8 @@ MINE_DAMAGE = 160
 WALKER_COST = 60
 WALKER_DAMAGE = 24
 FONT = pygame.font.SysFont("arial", 18)
+game_over = False
+
 
 TOWER_TYPES = {
     "basic": {
@@ -137,8 +139,9 @@ def load_unlocks():
 
 def save_unlocks(unlocked_towers, win_coins=0):
     try:
-        with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
-            json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
+        if not SANDBOX_MODE:
+            with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
+                json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
     except OSError:
         pass
 
@@ -796,14 +799,16 @@ class Walker:
 
 
 class Game:
-    def __init__(self, path_points):
+    def __init__(self, path_points, sandbox_mode=False):
+        print("sandbox_mode =  ", sandbox_mode)
         self.path_points = path_points
+        self.sandbox_mode = sandbox_mode
         self.enemies = []
         self.towers = []
         self.projectiles = []
         self.explosions = []
         self.mines = []
-        self.money = START_MONEY
+        self.money = 5000 if sandbox_mode else START_MONEY
         self.lives = START_LIVES
         self.wave_index = 0
         self.spawned = 0
@@ -817,13 +822,15 @@ class Game:
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
-        self.unlocked_towers, self.win_coins = load_progress()
+        self.unlocked_towers, self.win_coins_saved = load_progress()
+        self.win_coins = 5000 if sandbox_mode else self.win_coins_saved
         self.highest_cleared_wave = max(
             (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
             default=0,
         )
         self.victory_coins_awarded = False
-        self._apply_unlocks_from_progress()
+        if not sandbox_mode:
+            self._apply_unlocks_from_progress()
 
     def _apply_unlocks_from_progress(self):
         for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
@@ -1196,6 +1203,8 @@ class Game:
             surface.blit(hint_text, (self.wave_button_rect.x + 10, self.wave_button_rect.y + self.wave_button_rect.height + 8))
 
         if self.game_over:
+            global game_over, now_coins
+            game_over = True
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             surface.blit(overlay, (0, 0))
@@ -1209,7 +1218,7 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map):
+def draw_map_selection(surface, selected_map, sandbox_mode=False):
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
@@ -1238,12 +1247,21 @@ def draw_map_selection(surface, selected_map):
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
     surface.blit(note, (40, 260))
 
+    sandbox_label = "Sandbox Mode: ON" if sandbox_mode else "Sandbox Mode: OFF"
+    sandbox_color = (100, 255, 100) if sandbox_mode else (180, 180, 180)
+    sandbox_text = FONT.render(sandbox_label, True, sandbox_color)
+    surface.blit(sandbox_text, (40, 300))
+    sandbox_info = FONT.render("Press S to toggle. (5000 money, 5000 win coins, no unlocks)", True, (160, 160, 160))
+    surface.blit(sandbox_info, (40, 325))
+
+SANDBOX_MODE = False
 
 def main():
     selected_map = DEFAULT_MAP
     game = None
     in_menu = True
     running = True
+    global SANDBOX_MODE
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
@@ -1254,7 +1272,7 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
                     if event.key == pygame.K_RETURN:
-                        game = Game(MAPS[selected_map])
+                        game = Game(MAPS[selected_map], sandbox_mode=SANDBOX_MODE)
                         in_menu = False
                     elif event.key == pygame.K_1:
                         selected_map = list(MAPS.keys())[0]
@@ -1262,6 +1280,12 @@ def main():
                         selected_map = list(MAPS.keys())[1]
                     elif event.key == pygame.K_3:
                         selected_map = list(MAPS.keys())[2]
+                    elif event.key == pygame.K_s:
+                        SANDBOX_MODE = not SANDBOX_MODE
+                        with open("savegame.json") as f:
+                            data = json.loads(f.read())
+                            now_coins = data['win_coins']
+
                 else:
                     if not game.game_over and event.unicode and event.unicode.isprintable():
                         game.key_buffer += event.unicode
