@@ -18,8 +18,6 @@ MINE_DAMAGE = 160
 WALKER_COST = 60
 WALKER_DAMAGE = 24
 FONT = pygame.font.SysFont("arial", 18)
-game_over = False
-
 
 TOWER_TYPES = {
     "basic": {
@@ -97,6 +95,16 @@ TOWER_TYPES = {
         "ring": (180, 250, 255),
         "move_speed": 120,
     },
+    "spawner": {
+        "name": "Spawner",
+        "range": 0,
+        "cooldown": 1.5,
+        "damage": 0,
+        "cost": 0,
+        "win_cost": 5,
+        "color": (210, 180, 100),
+        "ring": (255, 220, 150),
+    },
 }
 
 TOWER_UNLOCK_WAVES = {
@@ -139,9 +147,8 @@ def load_unlocks():
 
 def save_unlocks(unlocked_towers, win_coins=0):
     try:
-        if not SANDBOX_MODE:
-            with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
-                json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
+        with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
+            json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
     except OSError:
         pass
 
@@ -333,6 +340,8 @@ class Tower:
         self.time_since_shot = 0.0
         self.aim_angle = -math.pi / 2
         self.target = None
+        if self.type == "spawner":
+            self.spawn_timer = 0.0
         self.health = 120
         self.shooter_immunity = False
         if self.type == "boinger":
@@ -345,6 +354,13 @@ class Tower:
         return self.health <= 0
 
     def update(self, dt, enemies):
+        if self.type == "spawner":
+            self.spawn_timer += dt
+            if self.spawn_timer >= self.cooldown:
+                self.spawn_timer = 0.0
+                return "spawn_walker"
+            return None
+
         if self.type in ("flyer", "boinger"):
             self.x += self.vx * dt
             self.y += self.vy * dt
@@ -448,6 +464,14 @@ class Tower:
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 16)
             pygame.draw.line(surface, (80, 60, 45), (base_x, base_y - 1), (barrel_end_x, barrel_end_y), 3)
             pygame.draw.circle(surface, (255, 140, 70), (base_x + int(math.cos(self.aim_angle) * 10), base_y + int(math.sin(self.aim_angle) * 10)), 6)
+        elif self.type == "spawner":
+            pygame.draw.rect(surface, (180, 150, 70), (base_x - 12, base_y - 12, 24, 24))
+            pygame.draw.rect(surface, (220, 190, 120), (base_x - 9, base_y - 9, 18, 18))
+            for i in range(4):
+                angle = (self.aim_angle + i * math.pi / 2)
+                exit_x = base_x + int(math.cos(angle) * 10)
+                exit_y = base_y + int(math.sin(angle) * 10)
+                pygame.draw.circle(surface, (255, 220, 150), (exit_x, exit_y), 4)
         if self.type in ("flyer", "boinger"):
             pygame.draw.polygon(surface, (100, 200, 200), [
                 (base_x - 12, base_y),
@@ -799,16 +823,14 @@ class Walker:
 
 
 class Game:
-    def __init__(self, path_points, sandbox_mode=False):
-        print("sandbox_mode =  ", sandbox_mode)
+    def __init__(self, path_points):
         self.path_points = path_points
-        self.sandbox_mode = sandbox_mode
         self.enemies = []
         self.towers = []
         self.projectiles = []
         self.explosions = []
         self.mines = []
-        self.money = 5000 if sandbox_mode else START_MONEY
+        self.money = START_MONEY
         self.lives = START_LIVES
         self.wave_index = 0
         self.spawned = 0
@@ -822,15 +844,13 @@ class Game:
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
-        self.unlocked_towers, self.win_coins_saved = load_progress()
-        self.win_coins = 5000 if sandbox_mode else self.win_coins_saved
+        self.unlocked_towers, self.win_coins = load_progress()
         self.highest_cleared_wave = max(
             (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
             default=0,
         )
         self.victory_coins_awarded = False
-        if not sandbox_mode:
-            self._apply_unlocks_from_progress()
+        self._apply_unlocks_from_progress()
 
     def _apply_unlocks_from_progress(self):
         for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
@@ -984,7 +1004,9 @@ class Game:
 
         for tower in self.towers:
             shot = tower.update(dt, self.enemies)
-            if shot:
+            if shot == "spawn_walker":
+                self.walkers.append(Walker(tower.x, tower.y, self.path_points))
+            elif shot:
                 self.projectiles.append(shot)
         for mine in list(self.mines):
             if mine.update(self.enemies):
@@ -1165,6 +1187,7 @@ class Game:
         mine_tower_label = "Mine Tower" if self.is_tower_unlocked("mine_tower") else "Hidden"
         warden_label = "Warden" if self.win_coins >= 1 else "Hidden"
         nova_label = "Nova" if self.win_coins >= 2 else "Hidden"
+        spawner_label = "Spawner" if self.win_coins >= 5 else "Hidden"
         status = [
             f"Money: {self.money}",
             f"Win coins: {self.win_coins}",
@@ -1174,8 +1197,8 @@ class Game:
             "Basic unlocked. New towers unlock by wave.",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
-            f"Press 8={mine_tower_label} 9={warden_label}",
-            f"Press 0={nova_label}",
+            f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
+            f"Press A={spawner_label}",
             "Click tower to upgrade (+$80)",
         ]
         for i, line in enumerate(status):
@@ -1203,8 +1226,6 @@ class Game:
             surface.blit(hint_text, (self.wave_button_rect.x + 10, self.wave_button_rect.y + self.wave_button_rect.height + 8))
 
         if self.game_over:
-            global game_over, now_coins
-            game_over = True
             overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             surface.blit(overlay, (0, 0))
@@ -1218,7 +1239,7 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map, sandbox_mode=False):
+def draw_map_selection(surface, selected_map):
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
@@ -1237,6 +1258,8 @@ def draw_map_selection(surface, selected_map, sandbox_mode=False):
         "Freeze: wave 4",
         "Boinger: wave 5",
         "Walker: wave 6",
+        "  Mine Tower: ???",
+
     ]
     for index, rule in enumerate(unlock_rules):
         text = FONT.render(rule, True, (220, 220, 220))
@@ -1247,21 +1270,12 @@ def draw_map_selection(surface, selected_map, sandbox_mode=False):
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
     surface.blit(note, (40, 260))
 
-    sandbox_label = "Sandbox Mode: ON" if sandbox_mode else "Sandbox Mode: OFF"
-    sandbox_color = (100, 255, 100) if sandbox_mode else (180, 180, 180)
-    sandbox_text = FONT.render(sandbox_label, True, sandbox_color)
-    surface.blit(sandbox_text, (40, 300))
-    sandbox_info = FONT.render("Press S to toggle. (5000 money, 5000 win coins, no unlocks)", True, (160, 160, 160))
-    surface.blit(sandbox_info, (40, 325))
-
-SANDBOX_MODE = False
 
 def main():
     selected_map = DEFAULT_MAP
     game = None
     in_menu = True
     running = True
-    global SANDBOX_MODE
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
@@ -1272,7 +1286,7 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
                     if event.key == pygame.K_RETURN:
-                        game = Game(MAPS[selected_map], sandbox_mode=SANDBOX_MODE)
+                        game = Game(MAPS[selected_map])
                         in_menu = False
                     elif event.key == pygame.K_1:
                         selected_map = list(MAPS.keys())[0]
@@ -1280,12 +1294,6 @@ def main():
                         selected_map = list(MAPS.keys())[1]
                     elif event.key == pygame.K_3:
                         selected_map = list(MAPS.keys())[2]
-                    elif event.key == pygame.K_s:
-                        SANDBOX_MODE = not SANDBOX_MODE
-                        with open("savegame.json") as f:
-                            data = json.loads(f.read())
-                            now_coins = data['win_coins']
-
                 else:
                     if not game.game_over and event.unicode and event.unicode.isprintable():
                         game.key_buffer += event.unicode
@@ -1326,6 +1334,9 @@ def main():
                     elif event.key == pygame.K_0:
                         if game.can_buy_win_tower("nova"):
                             game.selected_tower = "nova"
+                    elif event.key == pygame.K_a:
+                        if game.can_buy_win_tower("spawner"):
+                            game.selected_tower = "spawner"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not in_menu:
                 if not game.game_over:
                     if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
