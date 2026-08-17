@@ -6,6 +6,8 @@ A simple tower defense game built with `pygame`.
 
 1. Install dependencies:
 
+- Note: you do not need to install dependencies if you have pygame>=2.0
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -13,7 +15,7 @@ pip install -r requirements.txt
 2. Run the game:
 
 ```bash
-python main.py
+python3 main.py
 ```
 
 ## Controls
