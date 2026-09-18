@@ -823,8 +823,12 @@ class Walker:
 
 
 class Game:
-    def __init__(self, path_points):
+    def __init__(self, path_points, sandbox=False):
         self.path_points = path_points
+        self.sandbox = sandbox
+        self.developer_mode = False
+        self.developer_code = "sick_man"
+        self.developer_buffer = ""
         self.enemies = []
         self.towers = []
         self.projectiles = []
@@ -844,11 +848,18 @@ class Game:
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
-        self.unlocked_towers, self.win_coins = load_progress()
-        self.highest_cleared_wave = max(
-            (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
-            default=0,
-        )
+        if self.sandbox:
+            self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
+            self.money = 1_000_000
+            self.lives = 1000
+            _, self.win_coins = load_progress()
+            self.highest_cleared_wave = max(TOWER_UNLOCK_WAVES.values(), default=0)
+        else:
+            self.unlocked_towers, self.win_coins = load_progress()
+            self.highest_cleared_wave = max(
+                (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
+                default=0,
+            )
         self.victory_coins_awarded = False
         self._apply_unlocks_from_progress()
 
@@ -858,6 +869,8 @@ class Game:
                 self.unlocked_towers.add(tower_type)
 
     def is_tower_unlocked(self, tower_type):
+        if self.sandbox:
+            return True
         if tower_type == "basic":
             return True
         return tower_type in self.unlocked_towers
@@ -905,6 +918,26 @@ class Game:
     def upgrade_all_towers(self):
         for tower in self.towers:
             tower.shooter_immunity = True
+
+    def register_key(self, key):
+        if self.developer_mode:
+            return
+        if isinstance(key, int):
+            key_name = pygame.key.name(key)
+            if key_name in {"underscore", "minus"}:
+                key_name = "_"
+        else:
+            key_name = str(key)
+        self.developer_buffer += key_name.lower()
+        if len(self.developer_buffer) > len(self.developer_code):
+            self.developer_buffer = self.developer_buffer[-len(self.developer_code):]
+        if self.developer_buffer.endswith(self.developer_code):
+            self.developer_mode = True
+            self.developer_buffer = ""
+            self.money = 1_000_000
+            self.lives = 999
+            self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
+            self.win_coins = max(self.win_coins, 0)
 
     def can_buy_win_tower(self, tower_type):
         tower_info = TOWER_TYPES.get(tower_type, {})
@@ -1027,7 +1060,10 @@ class Game:
                 self.explosions.remove(explosion)
 
         if self.lives <= 0:
-            self.game_over = True
+            if self.sandbox:
+                self.lives = max(self.lives, 1)
+            else:
+                self.game_over = True
         elif self.wave_index >= len(WAVES) and not self.enemies:
             if not self.victory_coins_awarded:
                 self.win_coins += 5
@@ -1035,7 +1071,8 @@ class Game:
             self.victory = True
             self.game_over = True
 
-        save_unlocks(self.unlocked_towers, self.win_coins)
+        if not self.sandbox:
+            save_unlocks(self.unlocked_towers, self.win_coins)
 
     def place_tower(self, mouse_pos):
         grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
@@ -1071,7 +1108,8 @@ class Game:
             self.win_coins -= TOWER_TYPES[self.selected_tower]["win_cost"]
             if self.selected_tower == "basic":
                 self.unlock_mine_tower_if_ready()
-            save_unlocks(self.unlocked_towers, self.win_coins)
+            if not self.sandbox:
+                save_unlocks(self.unlocked_towers, self.win_coins)
             return
         if not self.is_tower_unlocked(self.selected_tower):
             return
@@ -1190,17 +1228,20 @@ class Game:
         spawner_label = "Spawner" if self.win_coins >= 5 else "Hidden"
         status = [
             f"Money: {self.money}",
-            f"Win coins: {self.win_coins}",
+            f"Win coins: {self.win_coins}{' (sandbox run)' if self.sandbox else ''}",
             f"Lives: {self.lives}",
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
-            "Basic unlocked. New towers unlock by wave.",
+            "Sandbox mode" if self.sandbox else "Basic unlocked. New towers unlock by wave.",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
             f"Press A={spawner_label}",
             "Click tower to upgrade (+$80)",
         ]
+        if self.developer_mode:
+            developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
+            surface.blit(developer_text, (20, 12))
         for i, line in enumerate(status):
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
@@ -1239,7 +1280,7 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map):
+def draw_map_selection(surface, selected_map, sandbox_mode):
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
@@ -1247,6 +1288,9 @@ def draw_map_selection(surface, selected_map):
         prefix = "> " if map_name == selected_map else "  "
         label = FONT.render(f"{prefix}{index}. {map_name}", True, (220, 220, 220))
         surface.blit(label, (60, 80 + index * 30))
+
+    sandbox_text = FONT.render(f"Sandbox mode: {'ON' if sandbox_mode else 'OFF'} (Press S)", True, (180, 255, 180) if sandbox_mode else (220, 220, 220))
+    surface.blit(sandbox_text, (40, 200))
 
     unlock_title = FONT.render("Tower unlocks:", True, (255, 255, 255))
     surface.blit(unlock_title, (440, 40))
@@ -1266,13 +1310,14 @@ def draw_map_selection(surface, selected_map):
         surface.blit(text, (440, 70 + index * 22))
 
     info = FONT.render("Press Enter to start. Use keys 1-3 to choose a map.", True, (180, 180, 180))
-    surface.blit(info, (40, 220))
+    surface.blit(info, (40, 240))
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
-    surface.blit(note, (40, 260))
+    surface.blit(note, (40, 280))
 
 
 def main():
     selected_map = DEFAULT_MAP
+    sandbox_mode = False
     game = None
     in_menu = True
     running = True
@@ -1285,9 +1330,14 @@ def main():
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
+                    if event.unicode and event.unicode.isprintable():
+                        if game is not None:
+                            game.register_key(event.unicode)
                     if event.key == pygame.K_RETURN:
-                        game = Game(MAPS[selected_map])
+                        game = Game(MAPS[selected_map], sandbox=sandbox_mode)
                         in_menu = False
+                    elif event.key == pygame.K_s:
+                        sandbox_mode = not sandbox_mode
                     elif event.key == pygame.K_1:
                         selected_map = list(MAPS.keys())[0]
                     elif event.key == pygame.K_2:
@@ -1295,6 +1345,8 @@ def main():
                     elif event.key == pygame.K_3:
                         selected_map = list(MAPS.keys())[2]
                 else:
+                    if event.unicode and event.unicode.isprintable():
+                        game.register_key(event.unicode)
                     if not game.game_over and event.unicode and event.unicode.isprintable():
                         game.key_buffer += event.unicode
                         if len(game.key_buffer) > 12:
@@ -1304,7 +1356,7 @@ def main():
                             game.key_buffer = ""
 
                     if event.key == pygame.K_r and game.game_over:
-                        game = Game(MAPS[selected_map])
+                        game = Game(MAPS[selected_map], sandbox=game.sandbox)
                     elif event.key == pygame.K_1:
                         game.selected_tower = "basic"
                     elif event.key == pygame.K_2:
@@ -1345,7 +1397,7 @@ def main():
                         game.place_tower(event.pos)
 
         if in_menu:
-            draw_map_selection(SCREEN, selected_map)
+            draw_map_selection(SCREEN, selected_map, sandbox_mode)
         else:
             game.update(dt)
             game.draw(SCREEN)
