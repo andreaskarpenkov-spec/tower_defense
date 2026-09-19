@@ -105,6 +105,16 @@ TOWER_TYPES = {
         "color": (210, 180, 100),
         "ring": (255, 220, 150),
     },
+    "gunner": {
+        "name": "Gunner",
+        "range": 155,
+        "cooldown": 0.65,
+        "damage": 24,
+        "cost": 180,
+        "color": (220, 100, 70),
+        "ring": (255, 170, 130),
+        "move_speed": 70,
+    },
 }
 
 TOWER_UNLOCK_WAVES = {
@@ -115,10 +125,12 @@ TOWER_UNLOCK_WAVES = {
     "freeze": 4,
     "boinger": 5,
     "walker": 6,
+    "gunner": 6,
     "mine": 2,
 }
 
 SAVE_FILE = "savegame.json"
+MAP_UNLOCK_COST = 20
 
 
 def load_progress():
@@ -145,10 +157,22 @@ def load_unlocks():
     return unlocked_towers
 
 
-def save_unlocks(unlocked_towers, win_coins=0):
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None):
     try:
+        if unlocked_maps is None:
+            unlocked_maps = load_unlocked_maps()
+        if highest_cleared_wave is None:
+            highest_cleared_wave = load_highest_cleared_wave()
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
-            json.dump({"unlocked_towers": sorted(unlocked_towers), "win_coins": int(win_coins)}, save_file)
+            json.dump(
+                {
+                    "unlocked_towers": sorted(unlocked_towers),
+                    "win_coins": int(win_coins),
+                    "unlocked_maps": sorted(unlocked_maps),
+                    "highest_cleared_wave": int(highest_cleared_wave),
+                },
+                save_file,
+            )
     except OSError:
         pass
 
@@ -181,9 +205,48 @@ MAPS = {
         (580, 320),
         (840, 320),
     ],
+    "Spiral": [
+        (0, 120),
+        (720, 120),
+        (720, 520),
+        (120, 520),
+        (120, 240),
+        (600, 240),
+        (600, 400),
+        (280, 400),
+        (280, 320),
+        (840, 320),
+    ],
 }
 
 DEFAULT_MAP = "Classic"
+FREE_MAPS = {"Classic", "Loop", "Cross"}
+SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
+
+
+def load_unlocked_maps():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                saved_maps = data.get("unlocked_maps", [])
+                return FREE_MAPS | {map_name for map_name in saved_maps if map_name in MAPS}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return set(FREE_MAPS)
+
+
+def load_highest_cleared_wave():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                highest_cleared_wave = int(data.get("highest_cleared_wave", 0) or 0)
+                if 0 <= highest_cleared_wave <= len(WAVES):
+                    return highest_cleared_wave
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return 0
 
 WAVES = [
     {"count": 5, "speed": 4.0, "hp": 180, "reward": 18},
@@ -191,6 +254,7 @@ WAVES = [
     {"count": 9, "speed": 6.0, "hp": 300, "reward": 28},
     {"count": 12, "speed": 7.2, "hp": 390, "reward": 34},
     {"count": 15, "speed": 8.5, "hp": 520, "reward": 42},
+    {"count": 18, "speed": 9.5, "hp": 650, "reward": 50},
 ]
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -328,7 +392,7 @@ class Enemy:
 
 
 class Tower:
-    def __init__(self, x, y, tower_type="basic"):
+    def __init__(self, x, y, tower_type="basic", path_points=None):
         self.x = x
         self.y = y
         self.type = tower_type
@@ -349,6 +413,31 @@ class Tower:
             angle = random.uniform(0, math.tau)
             self.vx = math.cos(angle) * self.move_speed
             self.vy = math.sin(angle) * self.move_speed
+        if self.type == "gunner":
+            self.path_points = path_points or []
+            self.move_speed = TOWER_TYPES[self.type]["move_speed"]
+            self.path_segment = 0
+            if len(self.path_points) > 1:
+                self.path_segment = min(
+                    range(len(self.path_points) - 1),
+                    key=lambda index: self._distance_to_segment(
+                        self.x,
+                        self.y,
+                        *self.path_points[index],
+                        *self.path_points[index + 1],
+                    ),
+                )
+
+    def _distance_to_segment(self, px, py, x1, y1, x2, y2):
+        dx = x2 - x1
+        dy = y2 - y1
+        if dx == 0 and dy == 0:
+            return math.hypot(px - x1, py - y1)
+        t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+        t = max(0, min(1, t))
+        closest_x = x1 + t * dx
+        closest_y = y1 + t * dy
+        return math.hypot(px - closest_x, py - closest_y)
 
     def is_dead(self):
         return self.health <= 0
@@ -360,6 +449,22 @@ class Tower:
                 self.spawn_timer = 0.0
                 return "spawn_walker"
             return None
+
+        if self.type == "gunner" and len(self.path_points) > 1:
+            target_x, target_y = self.path_points[self.path_segment + 1]
+            dx = target_x - self.x
+            dy = target_y - self.y
+            distance = math.hypot(dx, dy)
+            step = self.move_speed * dt
+            if distance <= step or distance == 0:
+                self.x, self.y = target_x, target_y
+                self.path_segment += 1
+                if self.path_segment >= len(self.path_points) - 1:
+                    self.path_segment = 0
+                    self.x, self.y = self.path_points[0]
+            else:
+                self.x += dx / distance * step
+                self.y += dy / distance * step
 
         if self.type in ("flyer", "boinger"):
             self.x += self.vx * dt
@@ -472,6 +577,13 @@ class Tower:
                 exit_x = base_x + int(math.cos(angle) * 10)
                 exit_y = base_y + int(math.sin(angle) * 10)
                 pygame.draw.circle(surface, (255, 220, 150), (exit_x, exit_y), 4)
+        elif self.type == "gunner":
+            pygame.draw.rect(surface, (90, 45, 35), (base_x - 11, base_y - 12, 22, 24))
+            pygame.draw.rect(surface, (220, 100, 70), (base_x - 8, base_y - 10, 16, 20))
+            barrel_end_x = base_x + int(math.cos(self.aim_angle) * 23)
+            barrel_end_y = base_y + int(math.sin(self.aim_angle) * 23)
+            pygame.draw.line(surface, (255, 220, 170), (base_x, base_y - 2), (barrel_end_x, barrel_end_y), 5)
+            pygame.draw.circle(surface, (255, 230, 180), (base_x, base_y - 12), 5)
         if self.type in ("flyer", "boinger"):
             pygame.draw.polygon(surface, (100, 200, 200), [
                 (base_x - 12, base_y),
@@ -829,6 +941,7 @@ class Game:
         self.developer_mode = False
         self.developer_code = "sick_man"
         self.developer_buffer = ""
+        self.enemies_paused = False
         self.enemies = []
         self.towers = []
         self.projectiles = []
@@ -856,10 +969,13 @@ class Game:
             self.highest_cleared_wave = max(TOWER_UNLOCK_WAVES.values(), default=0)
         else:
             self.unlocked_towers, self.win_coins = load_progress()
-            self.highest_cleared_wave = max(
-                (wave_required for tower, wave_required in TOWER_UNLOCK_WAVES.items() if tower in self.unlocked_towers and tower != "basic"),
-                default=0,
-            )
+            self.wave_six_cleared = load_highest_cleared_wave() >= 6
+            self.highest_cleared_wave = load_highest_cleared_wave()
+            self.unlocked_towers.discard("gunner")
+            if self.wave_six_cleared:
+                self.unlocked_towers.add("gunner")
+        if self.sandbox:
+            self.wave_six_cleared = True
         self.victory_coins_awarded = False
         self._apply_unlocks_from_progress()
 
@@ -871,6 +987,8 @@ class Game:
     def is_tower_unlocked(self, tower_type):
         if self.sandbox:
             return True
+        if tower_type == "gunner":
+            return self.wave_six_cleared
         if tower_type == "basic":
             return True
         return tower_type in self.unlocked_towers
@@ -891,6 +1009,8 @@ class Game:
         if not all(enemy.is_dead() or enemy.reached_goal() for enemy in self.enemies):
             return
         self.highest_cleared_wave = max(self.highest_cleared_wave, self.wave_index + 1)
+        if self.wave_index + 1 >= 6:
+            self.wave_six_cleared = True
         self._apply_unlocks_from_progress()
 
     def unlock_mine_tower_if_ready(self):
@@ -934,10 +1054,10 @@ class Game:
         if self.developer_buffer.endswith(self.developer_code):
             self.developer_mode = True
             self.developer_buffer = ""
-            self.money = 1_000_000
-            self.lives = 999
-            self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
-            self.win_coins = max(self.win_coins, 0)
+
+    def toggle_enemy_pause(self):
+        if self.developer_mode:
+            self.enemies_paused = not self.enemies_paused
 
     def can_buy_win_tower(self, tower_type):
         tower_info = TOWER_TYPES.get(tower_type, {})
@@ -998,7 +1118,7 @@ class Game:
 
         self.unlock_towers()
 
-        if self.wave_index < len(WAVES):
+        if self.wave_index < len(WAVES) and not self.enemies_paused:
             wave = WAVES[self.wave_index]
             if not self.wave_ready:
                 self.wave_timer += dt
@@ -1014,22 +1134,24 @@ class Game:
                         self.wave_index += 1
                         self.next_spawn = 0.0
 
-        self.separate_enemies()
+        if not self.enemies_paused:
+            self.separate_enemies()
 
-        for enemy in list(self.enemies):
-            enemy.update(dt, self.towers)
-            if enemy.reached_goal() and not enemy.is_dead():
-                self.lives -= 1
-                self.enemies.remove(enemy)
-            elif enemy.is_dead():
-                self.money += enemy.reward
-                self.enemies.remove(enemy)
+        if not self.enemies_paused:
+            for enemy in list(self.enemies):
+                enemy.update(dt, self.towers)
+                if enemy.reached_goal() and not enemy.is_dead():
+                    self.lives -= 1
+                    self.enemies.remove(enemy)
+                elif enemy.is_dead():
+                    self.money += enemy.reward
+                    self.enemies.remove(enemy)
 
-        for enemy in self.enemies:
-            if enemy.type == "shooter":
-                for projectile in list(enemy.projectiles):
-                    if not projectile.update(dt):
-                        enemy.projectiles.remove(projectile)
+            for enemy in self.enemies:
+                if enemy.type == "shooter":
+                    for projectile in list(enemy.projectiles):
+                        if not projectile.update(dt):
+                            enemy.projectiles.remove(projectile)
 
         for tower in list(self.towers):
             if tower.health <= 0:
@@ -1072,7 +1194,7 @@ class Game:
             self.game_over = True
 
         if not self.sandbox:
-            save_unlocks(self.unlocked_towers, self.win_coins)
+            save_unlocks(self.unlocked_towers, self.win_coins, highest_cleared_wave=self.highest_cleared_wave)
 
     def place_tower(self, mouse_pos):
         grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
@@ -1097,6 +1219,17 @@ class Game:
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
             self.money -= WALKER_COST
             return
+        if self.selected_tower == "gunner":
+            if not self.is_tower_unlocked("gunner"):
+                return
+            gunner_cost = TOWER_TYPES["gunner"]["cost"]
+            if self.money < gunner_cost:
+                return
+            if not self.can_place_mine(grid_x, grid_y):
+                return
+            self.towers.append(Tower(grid_x, grid_y, "gunner", self.path_points))
+            self.money -= gunner_cost
+            return
         if self.selected_tower in TOWER_TYPES and TOWER_TYPES[self.selected_tower].get("win_cost"):
             if not self.can_buy_win_tower(self.selected_tower):
                 return
@@ -1109,7 +1242,7 @@ class Game:
             if self.selected_tower == "basic":
                 self.unlock_mine_tower_if_ready()
             if not self.sandbox:
-                save_unlocks(self.unlocked_towers, self.win_coins)
+                save_unlocks(self.unlocked_towers, self.win_coins, highest_cleared_wave=self.highest_cleared_wave)
             return
         if not self.is_tower_unlocked(self.selected_tower):
             return
@@ -1171,7 +1304,42 @@ class Game:
 
     def draw_path(self, surface):
         for i in range(len(self.path_points) - 1):
-            pygame.draw.line(surface, (180, 140, 80), self.path_points[i], self.path_points[i + 1], PATH_WIDTH)
+            start_x, start_y = self.path_points[i]
+            end_x, end_y = self.path_points[i + 1]
+            pygame.draw.line(surface, (180, 140, 80), (start_x, start_y), (end_x, end_y), PATH_WIDTH)
+
+            dx = end_x - start_x
+            dy = end_y - start_y
+            segment_length = math.hypot(dx, dy)
+            if segment_length == 0:
+                continue
+            direction_x = dx / segment_length
+            direction_y = dy / segment_length
+            perpendicular_x = -direction_y
+            perpendicular_y = direction_x
+            for distance in range(48, int(segment_length), 72):
+                center_x = start_x + direction_x * distance
+                center_y = start_y + direction_y * distance
+                tip = (center_x + direction_x * 12, center_y + direction_y * 12)
+                left = (
+                    center_x - direction_x * 8 + perpendicular_x * 8,
+                    center_y - direction_y * 8 + perpendicular_y * 8,
+                )
+                right = (
+                    center_x - direction_x * 8 - perpendicular_x * 8,
+                    center_y - direction_y * 8 - perpendicular_y * 8,
+                )
+                pygame.draw.polygon(surface, (90, 65, 40), [tip, left, right])
+                inner_tip = (center_x + direction_x * 9, center_y + direction_y * 9)
+                inner_left = (
+                    center_x - direction_x * 6 + perpendicular_x * 5,
+                    center_y - direction_y * 6 + perpendicular_y * 5,
+                )
+                inner_right = (
+                    center_x - direction_x * 6 - perpendicular_x * 5,
+                    center_y - direction_y * 6 - perpendicular_y * 5,
+                )
+                pygame.draw.polygon(surface, (245, 210, 125), [inner_tip, inner_left, inner_right])
 
     def draw_grid(self, surface):
         for x in range(0, WIDTH, GRID_SIZE):
@@ -1222,10 +1390,11 @@ class Game:
         freeze_label = "Freeze" if self.is_tower_unlocked("freeze") else "Hidden"
         boinger_label = "Boinger" if self.is_tower_unlocked("boinger") else "Hidden"
         walker_label = "Walker" if self.is_tower_unlocked("walker") else "Hidden"
+        gunner_label = "Gunner" if self.is_tower_unlocked("gunner") else "Hidden"
         mine_tower_label = "Mine Tower" if self.is_tower_unlocked("mine_tower") else "Hidden"
-        warden_label = "Warden" if self.win_coins >= 1 else "Hidden"
-        nova_label = "Nova" if self.win_coins >= 2 else "Hidden"
-        spawner_label = "Spawner" if self.win_coins >= 5 else "Hidden"
+        warden_label = "Warden"
+        nova_label = "Nova"
+        spawner_label = "Spawner"
         status = [
             f"Money: {self.money}",
             f"Win coins: {self.win_coins}{' (sandbox run)' if self.sandbox else ''}",
@@ -1233,10 +1402,11 @@ class Game:
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
             "Sandbox mode" if self.sandbox else "Basic unlocked. New towers unlock by wave.",
+            "Enemies paused (Space to resume)" if self.enemies_paused else "Enemies running (Space to pause)" if self.developer_mode else "",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
-            f"Press A={spawner_label}",
+            f"Press A={spawner_label} B={gunner_label}",
             "Click tower to upgrade (+$80)",
         ]
         if self.developer_mode:
@@ -1280,17 +1450,32 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map, sandbox_mode):
+def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_coins):
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
     for index, map_name in enumerate(MAPS.keys(), start=1):
         prefix = "> " if map_name == selected_map else "  "
-        label = FONT.render(f"{prefix}{index}. {map_name}", True, (220, 220, 220))
+        if map_name in unlocked_maps:
+            map_label = map_name
+        else:
+            map_label = f"{map_name} ({MAP_UNLOCK_COST} win coins)"
+        label = FONT.render(f"{prefix}{index}. {map_label}", True, (220, 220, 220))
         surface.blit(label, (60, 80 + index * 30))
+        if map_name == "Spiral" and map_name not in unlocked_maps:
+            pygame.draw.rect(surface, (80, 150, 95), SPIRAL_BUY_RECT, border_radius=5)
+            pygame.draw.rect(surface, (160, 230, 170), SPIRAL_BUY_RECT, 2, border_radius=5)
+            buy_text = FONT.render("BUY", True, (255, 255, 255))
+            surface.blit(
+                buy_text,
+                (
+                    SPIRAL_BUY_RECT.x + (SPIRAL_BUY_RECT.width - buy_text.get_width()) // 2,
+                    SPIRAL_BUY_RECT.y + (SPIRAL_BUY_RECT.height - buy_text.get_height()) // 2,
+                ),
+            )
 
     sandbox_text = FONT.render(f"Sandbox mode: {'ON' if sandbox_mode else 'OFF'} (Press S)", True, (180, 255, 180) if sandbox_mode else (220, 220, 220))
-    surface.blit(sandbox_text, (40, 200))
+    surface.blit(sandbox_text, (40, 230))
 
     unlock_title = FONT.render("Tower unlocks:", True, (255, 255, 255))
     surface.blit(unlock_title, (440, 40))
@@ -1302,6 +1487,7 @@ def draw_map_selection(surface, selected_map, sandbox_mode):
         "Freeze: wave 4",
         "Boinger: wave 5",
         "Walker: wave 6",
+        "Gunner: wave 6",
         "  Mine Tower: ???",
 
     ]
@@ -1309,15 +1495,19 @@ def draw_map_selection(surface, selected_map, sandbox_mode):
         text = FONT.render(rule, True, (220, 220, 220))
         surface.blit(text, (440, 70 + index * 22))
 
-    info = FONT.render("Press Enter to start. Use keys 1-3 to choose a map.", True, (180, 180, 180))
-    surface.blit(info, (40, 240))
+    info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
+    surface.blit(info, (40, 270))
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
-    surface.blit(note, (40, 280))
+    surface.blit(note, (40, 310))
+    coins = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
+    surface.blit(coins, (40, 350))
 
 
 def main():
     selected_map = DEFAULT_MAP
     sandbox_mode = False
+    unlocked_maps = load_unlocked_maps()
+    _, menu_win_coins = load_progress()
     game = None
     in_menu = True
     running = True
@@ -1344,6 +1534,10 @@ def main():
                         selected_map = list(MAPS.keys())[1]
                     elif event.key == pygame.K_3:
                         selected_map = list(MAPS.keys())[2]
+                    elif event.key == pygame.K_4:
+                        map_name = list(MAPS.keys())[3]
+                        if map_name in unlocked_maps:
+                            selected_map = map_name
                 else:
                     if event.unicode and event.unicode.isprintable():
                         game.register_key(event.unicode)
@@ -1357,6 +1551,8 @@ def main():
 
                     if event.key == pygame.K_r and game.game_over:
                         game = Game(MAPS[selected_map], sandbox=game.sandbox)
+                    elif event.key == pygame.K_SPACE:
+                        game.toggle_enemy_pause()
                     elif event.key == pygame.K_1:
                         game.selected_tower = "basic"
                     elif event.key == pygame.K_2:
@@ -1389,15 +1585,26 @@ def main():
                     elif event.key == pygame.K_a:
                         if game.can_buy_win_tower("spawner"):
                             game.selected_tower = "spawner"
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not in_menu:
-                if not game.game_over:
+                    elif event.key == pygame.K_b:
+                        if game.is_tower_unlocked("gunner"):
+                            game.selected_tower = "gunner"
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if in_menu:
+                    if SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
+                        if menu_win_coins >= MAP_UNLOCK_COST:
+                            menu_win_coins -= MAP_UNLOCK_COST
+                            unlocked_maps.add("Spiral")
+                            selected_map = "Spiral"
+                            if not sandbox_mode:
+                                save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
+                elif not game.game_over:
                     if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
                         game.start_next_wave()
                     elif not game.upgrade_tower(event.pos):
                         game.place_tower(event.pos)
 
         if in_menu:
-            draw_map_selection(SCREEN, selected_map, sandbox_mode)
+            draw_map_selection(SCREEN, selected_map, sandbox_mode, unlocked_maps, menu_win_coins)
         else:
             game.update(dt)
             game.draw(SCREEN)
