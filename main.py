@@ -110,7 +110,7 @@ TOWER_TYPES = {
         "range": 155,
         "cooldown": 0.65,
         "damage": 24,
-        "cost": 180,
+        "cost": 130,
         "color": (220, 100, 70),
         "ring": (255, 170, 130),
         "move_speed": 70,
@@ -418,26 +418,33 @@ class Tower:
             self.move_speed = TOWER_TYPES[self.type]["move_speed"]
             self.path_segment = 0
             if len(self.path_points) > 1:
-                self.path_segment = min(
-                    range(len(self.path_points) - 1),
-                    key=lambda index: self._distance_to_segment(
-                        self.x,
-                        self.y,
-                        *self.path_points[index],
-                        *self.path_points[index + 1],
-                    ),
-                )
+                closest_distance = float("inf")
+                for index in range(len(self.path_points) - 1):
+                    start_x, start_y = self.path_points[index]
+                    end_x, end_y = self.path_points[index + 1]
+                    distance, progress = self._segment_projection(
+                        self.x, self.y, start_x, start_y, end_x, end_y
+                    )
+                    if distance <= closest_distance:
+                        closest_distance = distance
+                        self.path_segment = index
+                        self.x = start_x + (end_x - start_x) * progress
+                        self.y = start_y + (end_y - start_y) * progress
 
     def _distance_to_segment(self, px, py, x1, y1, x2, y2):
+        distance, _ = self._segment_projection(px, py, x1, y1, x2, y2)
+        return distance
+
+    def _segment_projection(self, px, py, x1, y1, x2, y2):
         dx = x2 - x1
         dy = y2 - y1
         if dx == 0 and dy == 0:
-            return math.hypot(px - x1, py - y1)
+            return math.hypot(px - x1, py - y1), 0.0
         t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
         t = max(0, min(1, t))
         closest_x = x1 + t * dx
         closest_y = y1 + t * dy
-        return math.hypot(px - closest_x, py - closest_y)
+        return math.hypot(px - closest_x, py - closest_y), t
 
     def is_dead(self):
         return self.health <= 0
@@ -955,12 +962,14 @@ class Game:
         self.wave_delay = 2.0
         self.next_spawn = 0.0
         self.wave_ready = False
-        self.wave_button_rect = pygame.Rect(WIDTH - 250, 260, 220, 40)
+        self.wave_button_rect = pygame.Rect(WIDTH - 250, 330, 220, 40)
         self.game_over = False
         self.victory = False
         self.selected_tower = "basic"
         self.walkers = []
         self.key_buffer = ""
+        self.dragged_enemy = None
+        self.drag_offset = (0, 0)
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
             self.money = 1_000_000
@@ -1058,6 +1067,42 @@ class Game:
     def toggle_enemy_pause(self):
         if self.developer_mode:
             self.enemies_paused = not self.enemies_paused
+
+    def move_enemies(self, dx, dy):
+        if not self.developer_mode:
+            return
+        for enemy in self.enemies:
+            if enemy.is_dead() or enemy.reached_goal():
+                continue
+            enemy.x = clamp(enemy.x + dx, 0, WIDTH)
+            enemy.y = clamp(enemy.y + dy, 0, HEIGHT)
+
+    def begin_enemy_drag(self, mouse_pos):
+        if not self.developer_mode:
+            return False
+        candidates = [
+            enemy
+            for enemy in self.enemies
+            if not enemy.is_dead() and not enemy.reached_goal()
+        ]
+        if not candidates:
+            return False
+        enemy = min(candidates, key=lambda item: math.hypot(item.x - mouse_pos[0], item.y - mouse_pos[1]))
+        if math.hypot(enemy.x - mouse_pos[0], enemy.y - mouse_pos[1]) > 18:
+            return False
+        self.dragged_enemy = enemy
+        self.drag_offset = (enemy.x - mouse_pos[0], enemy.y - mouse_pos[1])
+        return True
+
+    def drag_enemy(self, mouse_pos):
+        if not self.developer_mode or self.dragged_enemy is None:
+            return
+        self.dragged_enemy.x = clamp(mouse_pos[0] + self.drag_offset[0], 0, WIDTH)
+        self.dragged_enemy.y = clamp(mouse_pos[1] + self.drag_offset[1], 0, HEIGHT)
+
+    def end_enemy_drag(self):
+        self.dragged_enemy = None
+        self.drag_offset = (0, 0)
 
     def can_buy_win_tower(self, tower_type):
         tower_info = TOWER_TYPES.get(tower_type, {})
@@ -1403,6 +1448,8 @@ class Game:
             f"Selected: {selected_label}",
             "Sandbox mode" if self.sandbox else "Basic unlocked. New towers unlock by wave.",
             "Enemies paused (Space to resume)" if self.enemies_paused else "Enemies running (Space to pause)" if self.developer_mode else "",
+            "Arrow keys move enemies" if self.developer_mode else "",
+            "Drag enemies with mouse" if self.developer_mode else "",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
@@ -1553,6 +1600,14 @@ def main():
                         game = Game(MAPS[selected_map], sandbox=game.sandbox)
                     elif event.key == pygame.K_SPACE:
                         game.toggle_enemy_pause()
+                    elif event.key == pygame.K_UP:
+                        game.move_enemies(0, -20)
+                    elif event.key == pygame.K_DOWN:
+                        game.move_enemies(0, 20)
+                    elif event.key == pygame.K_LEFT:
+                        game.move_enemies(-20, 0)
+                    elif event.key == pygame.K_RIGHT:
+                        game.move_enemies(20, 0)
                     elif event.key == pygame.K_1:
                         game.selected_tower = "basic"
                     elif event.key == pygame.K_2:
@@ -1598,10 +1653,16 @@ def main():
                             if not sandbox_mode:
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
                 elif not game.game_over:
-                    if game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
+                    if game.begin_enemy_drag(event.pos):
+                        pass
+                    elif game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
                         game.start_next_wave()
                     elif not game.upgrade_tower(event.pos):
                         game.place_tower(event.pos)
+            elif event.type == pygame.MOUSEMOTION and not in_menu:
+                game.drag_enemy(event.pos)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and not in_menu:
+                game.end_enemy_drag()
 
         if in_menu:
             draw_map_selection(SCREEN, selected_map, sandbox_mode, unlocked_maps, menu_win_coins)

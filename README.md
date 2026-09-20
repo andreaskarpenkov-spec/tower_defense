@@ -4,12 +4,10 @@ A simple tower defense game built with `pygame`.
 
 ## Run
 
-1. Install dependencies:
-
-- Note: you do not need to install dependencies if you have pygame>=2.0
+1. Install dependencies in the cloned project folder:
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 2. Run the game:
@@ -17,6 +15,8 @@ pip install -r requirements.txt
 ```bash
 python3 main.py
 ```
+
+On Windows, use `py main.py` if `python3` is not available.
 
 ## Controls
 

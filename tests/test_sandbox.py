@@ -47,6 +47,14 @@ class SandboxModeTest(unittest.TestCase):
         self.assertGreater(gunner.x, 40)
         self.assertIsNotNone(shot)
 
+    def test_gunner_follows_path_forward_from_a_corner(self):
+        path = MAPS["Classic"]
+        gunner = Tower(280, 200, "gunner", path)
+
+        gunner.update(1.0, [])
+
+        self.assertGreater(gunner.y, 200)
+
     def test_game_has_six_waves(self):
         self.assertEqual(len(WAVES), 6)
 
@@ -157,6 +165,36 @@ class SandboxModeTest(unittest.TestCase):
         game.toggle_enemy_pause()
         game.update(1.0)
         self.assertNotEqual((enemy.x, enemy.y), starting_position)
+
+    def test_only_developer_mode_can_move_enemies_manually(self):
+        game = Game(MAPS["Classic"])
+        game.spawn_enemy()
+        enemy = game.enemies[0]
+        starting_position = (enemy.x, enemy.y)
+
+        game.move_enemies(20, 0)
+        self.assertEqual((enemy.x, enemy.y), starting_position)
+
+        for key in "sick_man":
+            game.register_key(key)
+        game.move_enemies(20, 0)
+        self.assertEqual(enemy.x, starting_position[0] + 20)
+
+    def test_developer_mode_can_drag_one_enemy(self):
+        game = Game(MAPS["Classic"])
+        game.spawn_enemy()
+        enemy = game.enemies[0]
+        original_position = (enemy.x, enemy.y)
+
+        self.assertFalse(game.begin_enemy_drag(original_position))
+        for key in "sick_man":
+            game.register_key(key)
+
+        self.assertTrue(game.begin_enemy_drag(original_position))
+        game.drag_enemy((original_position[0] + 35, original_position[1] + 10))
+        game.end_enemy_drag()
+
+        self.assertEqual((enemy.x, enemy.y), (original_position[0] + 35, original_position[1] + 10))
 
 
 if __name__ == "__main__":
