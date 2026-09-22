@@ -106,7 +106,7 @@ TOWER_TYPES = {
         "ring": (255, 220, 150),
     },
     "gunner": {
-        "name": "Gunner",
+        "name": "Runny Pew-Pew",
         "range": 155,
         "cooldown": 0.65,
         "damage": 24,
@@ -217,6 +217,13 @@ MAPS = {
         (280, 320),
         (840, 320),
     ],
+}
+
+MAP_BACKGROUNDS = {
+    "Classic": (20, 25, 35),
+    "Loop": (18, 30, 24),
+    "Cross": (28, 22, 38),
+    "Spiral": (40, 90, 55),
 }
 
 DEFAULT_MAP = "Classic"
@@ -942,8 +949,10 @@ class Walker:
 
 
 class Game:
-    def __init__(self, path_points, sandbox=False):
+    def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
+        self.map_name = map_name or self._detect_map_name(path_points)
+        self.background_color = MAP_BACKGROUNDS.get(self.map_name, (20, 25, 35))
         self.sandbox = sandbox
         self.developer_mode = False
         self.developer_code = "sick_man"
@@ -970,6 +979,8 @@ class Game:
         self.key_buffer = ""
         self.dragged_enemy = None
         self.drag_offset = (0, 0)
+        self.developer_spawn_type = "ground"
+        self.developer_spawn_rects = {}
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
             self.money = 1_000_000
@@ -987,6 +998,12 @@ class Game:
             self.wave_six_cleared = True
         self.victory_coins_awarded = False
         self._apply_unlocks_from_progress()
+
+    def _detect_map_name(self, path_points):
+        for map_name, points in MAPS.items():
+            if points == path_points:
+                return map_name
+        return "Classic"
 
     def _apply_unlocks_from_progress(self):
         for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
@@ -1076,6 +1093,22 @@ class Game:
                 continue
             enemy.x = clamp(enemy.x + dx, 0, WIDTH)
             enemy.y = clamp(enemy.y + dy, 0, HEIGHT)
+
+    def set_developer_spawn_type(self, enemy_type):
+        if enemy_type in {"ground", "flyer", "shooter"}:
+            self.developer_spawn_type = enemy_type
+
+    def developer_spawn_enemy(self):
+        if not self.developer_mode:
+            return
+        enemy_type = self.developer_spawn_type
+        if enemy_type == "ground":
+            enemy = Enemy(self.path_points, speed=5.0, hp=180, reward=18, enemy_type="ground")
+        elif enemy_type == "flyer":
+            enemy = Enemy(self.path_points, speed=6.0, hp=160, reward=26, enemy_type="flyer")
+        else:
+            enemy = Enemy(self.path_points, speed=4.5, hp=220, reward=28, enemy_type="shooter")
+        self.enemies.append(enemy)
 
     def begin_enemy_drag(self, mouse_pos):
         if not self.developer_mode:
@@ -1387,15 +1420,60 @@ class Game:
                 pygame.draw.polygon(surface, (245, 210, 125), [inner_tip, inner_left, inner_right])
 
     def draw_grid(self, surface):
+        if self.map_name == "Spiral":
+            return
         for x in range(0, WIDTH, GRID_SIZE):
             pygame.draw.line(surface, (40, 40, 40), (x, 0), (x, HEIGHT))
         for y in range(0, HEIGHT, GRID_SIZE):
             pygame.draw.line(surface, (40, 40, 40), (0, y), (WIDTH, y))
 
+    def draw_grass_texture(self, surface):
+        if self.map_name != "Spiral":
+            return
+        for x in range(16, WIDTH, 34):
+            for y in range(12, HEIGHT, 32):
+                if (x + y * 3) % 9 == 0:
+                    continue
+                offset_x = ((x * 13 + y * 7) % 17) - 8
+                offset_y = ((x * 9 + y * 11) % 15) - 7
+                plant_x = x + offset_x
+                plant_y = y + offset_y
+                if any(
+                    math.hypot(plant_x - px, plant_y - py) < 26
+                    for px, py in self.path_points
+                ):
+                    continue
+                stem_len = 10 + ((x * 5 + y * 3) % 14)
+                stem_color = (35, 90, 45)
+                pygame.draw.line(surface, stem_color, (plant_x, plant_y + 8), (plant_x, plant_y - stem_len), 2)
+                for leaf_index in range(4):
+                    leaf_angle = (leaf_index / 4) * math.tau + ((x * 7 + y) % 7) * 0.3
+                    leaf_x = plant_x + math.cos(leaf_angle) * (5 + (x % 5))
+                    leaf_y = plant_y - stem_len * 0.6 + math.sin(leaf_angle) * (5 + (y % 5))
+                    leaf_len = 10 + ((x * 3 + y * 5) % 12)
+                    pygame.draw.ellipse(surface, (65, 145, 80), (leaf_x, leaf_y, leaf_len, 5))
+                flower_size = 5 + ((x + y) % 4)
+                pygame.draw.circle(surface, (190, 210, 110), (plant_x, plant_y - stem_len - 3), flower_size)
+                pygame.draw.circle(surface, (120, 170, 90), (plant_x, plant_y - stem_len - 3), max(2, flower_size // 2))
+
+    def handle_developer_spawn_click(self, mouse_pos):
+        if not self.developer_mode:
+            return False
+        for key, rect in self.developer_spawn_rects.items():
+            if rect.collidepoint(mouse_pos):
+                if key == "spawn":
+                    self.developer_spawn_enemy()
+                else:
+                    self.set_developer_spawn_type(key)
+                return True
+        return False
+
     def draw(self, surface):
-        surface.fill((20, 25, 35))
+        surface.fill(self.background_color)
         self.draw_grid(surface)
         self.draw_path(surface)
+        if self.map_name == "Spiral":
+            self.draw_grass_texture(surface)
 
         for tower in self.towers:
             tower.draw(surface)
@@ -1414,6 +1492,9 @@ class Game:
 
         for enemy in self.enemies:
             enemy.draw(surface)
+
+        if self.map_name == "Spiral":
+            self.draw_grass_texture(surface)
 
         tower_info = TOWER_TYPES.get(self.selected_tower)
         if self.selected_tower == "mine":
@@ -1435,7 +1516,7 @@ class Game:
         freeze_label = "Freeze" if self.is_tower_unlocked("freeze") else "Hidden"
         boinger_label = "Boinger" if self.is_tower_unlocked("boinger") else "Hidden"
         walker_label = "Walker" if self.is_tower_unlocked("walker") else "Hidden"
-        gunner_label = "Gunner" if self.is_tower_unlocked("gunner") else "Hidden"
+        gunner_label = "Runny Pew-Pew" if self.is_tower_unlocked("gunner") else "Hidden"
         mine_tower_label = "Mine Tower" if self.is_tower_unlocked("mine_tower") else "Hidden"
         warden_label = "Warden"
         nova_label = "Nova"
@@ -1450,6 +1531,7 @@ class Game:
             "Enemies paused (Space to resume)" if self.enemies_paused else "Enemies running (Space to pause)" if self.developer_mode else "",
             "Arrow keys move enemies" if self.developer_mode else "",
             "Drag enemies with mouse" if self.developer_mode else "",
+            "Click dev buttons to spawn" if self.developer_mode else "",
             f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
             f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
             f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
@@ -1459,6 +1541,24 @@ class Game:
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
+            spawn_button_y = 36
+            self.developer_spawn_rects = {}
+            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter")]
+            for index, (enemy_type, label) in enumerate(enemy_types):
+                rect = pygame.Rect(20 + index * 110, spawn_button_y, 100, 28)
+                self.developer_spawn_rects[enemy_type] = rect
+                color = (110, 170, 90) if self.developer_spawn_type == enemy_type else (70, 80, 95)
+                pygame.draw.rect(surface, color, rect, border_radius=6)
+                pygame.draw.rect(surface, (180, 220, 200), rect, 2, border_radius=6)
+                button_text = FONT.render(label, True, (255, 255, 255))
+                surface.blit(button_text, (rect.x + 12, rect.y + 6))
+
+            spawn_rect = pygame.Rect(20, spawn_button_y + 36, 150, 30)
+            self.developer_spawn_rects["spawn"] = spawn_rect
+            pygame.draw.rect(surface, (140, 90, 60), spawn_rect, border_radius=6)
+            pygame.draw.rect(surface, (250, 200, 180), spawn_rect, 2, border_radius=6)
+            spawn_text = FONT.render(f"Spawn {self.developer_spawn_type.title()}", True, (255, 255, 255))
+            surface.blit(spawn_text, (spawn_rect.x + 10, spawn_rect.y + 6))
         for i, line in enumerate(status):
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
@@ -1534,7 +1634,7 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
         "Freeze: wave 4",
         "Boinger: wave 5",
         "Walker: wave 6",
-        "Gunner: wave 6",
+        "Runny Pew-Pew: wave 6",
         "  Mine Tower: ???",
 
     ]
@@ -1571,7 +1671,7 @@ def main():
                         if game is not None:
                             game.register_key(event.unicode)
                     if event.key == pygame.K_RETURN:
-                        game = Game(MAPS[selected_map], sandbox=sandbox_mode)
+                        game = Game(MAPS[selected_map], sandbox=sandbox_mode, map_name=selected_map)
                         in_menu = False
                     elif event.key == pygame.K_s:
                         sandbox_mode = not sandbox_mode
@@ -1597,7 +1697,7 @@ def main():
                             game.key_buffer = ""
 
                     if event.key == pygame.K_r and game.game_over:
-                        game = Game(MAPS[selected_map], sandbox=game.sandbox)
+                        game = Game(MAPS[selected_map], sandbox=game.sandbox, map_name=selected_map)
                     elif event.key == pygame.K_SPACE:
                         game.toggle_enemy_pause()
                     elif event.key == pygame.K_UP:
@@ -1653,7 +1753,9 @@ def main():
                             if not sandbox_mode:
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
                 elif not game.game_over:
-                    if game.begin_enemy_drag(event.pos):
+                    if game.developer_mode and game.handle_developer_spawn_click(event.pos):
+                        pass
+                    elif game.begin_enemy_drag(event.pos):
                         pass
                     elif game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
                         game.start_next_wave()

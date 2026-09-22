@@ -55,6 +55,15 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertGreater(gunner.y, 200)
 
+    def test_maps_have_distinct_backgrounds(self):
+        classic = Game(MAPS["Classic"], map_name="Classic")
+        loop = Game(MAPS["Loop"], map_name="Loop")
+        spiral = Game(MAPS["Spiral"], map_name="Spiral")
+
+        self.assertNotEqual(classic.background_color, loop.background_color)
+        self.assertNotEqual(loop.background_color, spiral.background_color)
+        self.assertEqual(classic.map_name, "Classic")
+
     def test_game_has_six_waves(self):
         self.assertEqual(len(WAVES), 6)
 
@@ -179,6 +188,22 @@ class SandboxModeTest(unittest.TestCase):
             game.register_key(key)
         game.move_enemies(20, 0)
         self.assertEqual(enemy.x, starting_position[0] + 20)
+
+    def test_developer_mode_can_spawn_enemy(self):
+        game = Game(MAPS["Classic"])
+        self.assertEqual(len(game.enemies), 0)
+
+        for key in "sick_man":
+            game.register_key(key)
+
+        game.set_developer_spawn_type("ground")
+        game.developer_spawn_enemy()
+        self.assertEqual(len(game.enemies), 1)
+
+        game.set_developer_spawn_type("flyer")
+        game.developer_spawn_enemy()
+        self.assertEqual(len(game.enemies), 2)
+        self.assertEqual(game.enemies[-1].type, "flyer")
 
     def test_developer_mode_can_drag_one_enemy(self):
         game = Game(MAPS["Classic"])
