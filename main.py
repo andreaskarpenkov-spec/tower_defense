@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import random
 import sys
 
@@ -129,7 +130,7 @@ TOWER_UNLOCK_WAVES = {
     "mine": 2,
 }
 
-SAVE_FILE = "savegame.json"
+SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 MAP_UNLOCK_COST = 20
 
 
@@ -229,6 +230,7 @@ MAP_BACKGROUNDS = {
 DEFAULT_MAP = "Classic"
 FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
+BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 
 
 def load_unlocked_maps():
@@ -291,6 +293,7 @@ class Enemy:
         self.projectiles = []
         self.slow_timer = 0.0
         self.slow_amount = 1.0
+        self.loser_hat = False
 
     def update(self, dt, towers):
         if self.finished:
@@ -369,17 +372,64 @@ class Enemy:
             self.y += dy / distance * step
 
     def draw(self, surface):
+        center_x, center_y = int(self.x), int(self.y)
         if self.type == "flyer":
-            color = (130, 220, 230)
+            wing_color = (70, 150, 155)
+            body_color = (115, 205, 210)
+            pygame.draw.polygon(
+                surface,
+                wing_color,
+                [(center_x - 8, center_y), (center_x - 25, center_y - 10), (center_x - 18, center_y + 8)],
+            )
+            pygame.draw.polygon(
+                surface,
+                wing_color,
+                [(center_x + 8, center_y), (center_x + 25, center_y - 10), (center_x + 18, center_y + 8)],
+            )
+            pygame.draw.circle(surface, body_color, (center_x, center_y), 13)
+            pygame.draw.polygon(
+                surface,
+                (45, 105, 110),
+                [(center_x - 7, center_y - 10), (center_x, center_y - 20), (center_x + 7, center_y - 10)],
+            )
+            eye_color = (255, 245, 150)
         elif self.type == "shooter":
-            color = (220, 140, 60)
+            body_color = (190, 105, 55)
+            pygame.draw.polygon(
+                surface,
+                (105, 55, 35),
+                [(center_x - 14, center_y - 8), (center_x - 8, center_y - 17), (center_x, center_y - 12),
+                 (center_x + 8, center_y - 17), (center_x + 14, center_y - 8), (center_x + 11, center_y + 12),
+                 (center_x, center_y + 18), (center_x - 11, center_y + 12)],
+            )
+            pygame.draw.circle(surface, body_color, (center_x, center_y), 12)
+            pygame.draw.line(surface, (70, 35, 25), (center_x + 8, center_y + 5), (center_x + 22, center_y + 1), 5)
+            eye_color = (255, 220, 100)
         else:
-            color = (220, 60, 60)
-        pygame.draw.circle(surface, color, (int(self.x), int(self.y)), 12)
-        if self.type == "flyer":
-            pygame.draw.circle(surface, (100, 180, 180), (int(self.x), int(self.y)), 16, 2)
-        if self.type == "shooter":
-            pygame.draw.circle(surface, (255, 200, 120), (int(self.x), int(self.y)), 8, 2)
+            pygame.draw.polygon(
+                surface,
+                (125, 35, 45),
+                [(center_x - 14, center_y - 5), (center_x - 11, center_y - 18), (center_x - 4, center_y - 12),
+                 (center_x, center_y - 22), (center_x + 5, center_y - 12), (center_x + 13, center_y - 18),
+                 (center_x + 14, center_y + 8), (center_x + 5, center_y + 17), (center_x - 7, center_y + 15)],
+            )
+            pygame.draw.circle(surface, (215, 55, 65), (center_x, center_y), 12)
+            eye_color = (255, 235, 120)
+
+        pygame.draw.circle(surface, eye_color, (center_x - 5, center_y - 3), 3)
+        pygame.draw.circle(surface, eye_color, (center_x + 5, center_y - 3), 3)
+        pygame.draw.circle(surface, (35, 25, 25), (center_x - 5, center_y - 3), 1)
+        pygame.draw.circle(surface, (35, 25, 25), (center_x + 5, center_y - 3), 1)
+        pygame.draw.arc(surface, (45, 20, 20), (center_x - 7, center_y + 1, 14, 9), 0.2, math.pi - 0.2, 2)
+        if self.loser_hat:
+            pygame.draw.polygon(
+                surface,
+                (125, 125, 135),
+                [(center_x - 10, center_y - 30), (center_x + 10, center_y - 30), (center_x, center_y - 52)],
+            )
+            pygame.draw.ellipse(surface, (80, 80, 90), (center_x - 13, center_y - 33, 26, 7))
+            loser_text = pygame.font.SysFont("arial", 8, bold=True).render("L", True, (230, 230, 240))
+            surface.blit(loser_text, (center_x - loser_text.get_width() // 2, center_y - 40))
         for projectile in self.projectiles:
             projectile.draw(surface)
         hp_ratio = self.hp / self.max_hp
@@ -981,6 +1031,13 @@ class Game:
         self.drag_offset = (0, 0)
         self.developer_spawn_type = "ground"
         self.developer_spawn_rects = {}
+        self.developer_stickman_active = False
+        self.developer_stickman_x = WIDTH / 2
+        self.developer_stickman_y = HEIGHT / 2
+        self.developer_stickman_vx = 130.0
+        self.developer_stickman_vy = 95.0
+        self.developer_stickman_time = 0.0
+        self.developer_stickman_turn_timer = 0.0
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
             self.money = 1_000_000
@@ -1079,6 +1136,7 @@ class Game:
             self.developer_buffer = self.developer_buffer[-len(self.developer_code):]
         if self.developer_buffer.endswith(self.developer_code):
             self.developer_mode = True
+            self.developer_stickman_active = True
             self.developer_buffer = ""
 
     def toggle_enemy_pause(self):
@@ -1137,6 +1195,59 @@ class Game:
         self.dragged_enemy = None
         self.drag_offset = (0, 0)
 
+    def update_developer_stickman(self, dt):
+        if not self.developer_stickman_active:
+            return
+        self.developer_stickman_time += dt
+        self.developer_stickman_turn_timer -= dt
+        if self.developer_stickman_turn_timer <= 0:
+            direction = random.uniform(0, math.tau)
+            speed = random.uniform(90, 170)
+            self.developer_stickman_vx = math.cos(direction) * speed
+            self.developer_stickman_vy = math.sin(direction) * speed
+            self.developer_stickman_turn_timer = random.uniform(0.35, 1.1)
+        self.developer_stickman_x += self.developer_stickman_vx * dt
+        self.developer_stickman_y += self.developer_stickman_vy * dt
+        if self.developer_stickman_x < 24 or self.developer_stickman_x > WIDTH - 24:
+            self.developer_stickman_vx *= -1
+            self.developer_stickman_x = clamp(self.developer_stickman_x, 24, WIDTH - 24)
+        if self.developer_stickman_y < 30 or self.developer_stickman_y > HEIGHT - 24:
+            self.developer_stickman_vy *= -1
+            self.developer_stickman_y = clamp(self.developer_stickman_y, 30, HEIGHT - 24)
+
+    def tag_touched_enemies(self):
+        if not self.developer_stickman_active:
+            return
+        for enemy in self.enemies:
+            if enemy.is_dead() or enemy.reached_goal():
+                continue
+            if math.hypot(enemy.x - self.developer_stickman_x, enemy.y - self.developer_stickman_y) <= 25:
+                enemy.loser_hat = True
+
+    def draw_developer_stickman(self, surface):
+        if not self.developer_stickman_active:
+            return
+        x = int(self.developer_stickman_x)
+        y = int(self.developer_stickman_y)
+        step = math.sin(self.developer_stickman_time * 10) * 7
+        facing = 1 if self.developer_stickman_vx >= 0 else -1
+        ink = (250, 250, 250)
+        accent = (255, 220, 90)
+        pygame.draw.circle(surface, accent, (x, y - 22), 9)
+        pygame.draw.circle(surface, ink, (x, y - 22), 9, 2)
+        pygame.draw.ellipse(surface, (25, 25, 35), (x - 18, y - 35, 36, 7))
+        pygame.draw.rect(surface, (35, 35, 48), (x - 15, y - 48, 30, 15), border_radius=3)
+        pygame.draw.rect(surface, (205, 65, 65), (x - 15, y - 37, 30, 5))
+        hat_text = pygame.font.SysFont("arial", 7, bold=True).render("sick-man", True, (255, 240, 180))
+        surface.blit(hat_text, (x - hat_text.get_width() // 2, y - 38))
+        pygame.draw.line(surface, ink, (x, y - 13), (x, y + 12), 3)
+        pygame.draw.line(surface, ink, (x, y - 5), (x - facing * 13, y + 5), 3)
+        pygame.draw.line(surface, ink, (x, y - 5), (x + facing * 13, y - 12), 3)
+        pygame.draw.line(surface, ink, (x, y + 12), (x - facing * (10 + step), y + 29), 3)
+        pygame.draw.line(surface, ink, (x, y + 12), (x + facing * (10 + step), y + 29), 3)
+        pygame.draw.circle(surface, accent, (x - 3, y - 24), 1)
+        pygame.draw.circle(surface, accent, (x + 3, y - 24), 1)
+
     def can_buy_win_tower(self, tower_type):
         tower_info = TOWER_TYPES.get(tower_type, {})
         win_cost = tower_info.get("win_cost", 0)
@@ -1194,6 +1305,7 @@ class Game:
         if self.game_over:
             return
 
+        self.update_developer_stickman(dt)
         self.unlock_towers()
 
         if self.wave_index < len(WAVES) and not self.enemies_paused:
@@ -1230,6 +1342,8 @@ class Game:
                     for projectile in list(enemy.projectiles):
                         if not projectile.update(dt):
                             enemy.projectiles.remove(projectile)
+
+            self.tag_touched_enemies()
 
         for tower in list(self.towers):
             if tower.health <= 0:
@@ -1439,8 +1553,11 @@ class Game:
                 plant_x = x + offset_x
                 plant_y = y + offset_y
                 if any(
-                    math.hypot(plant_x - px, plant_y - py) < 26
-                    for px, py in self.path_points
+                    self._distance_to_segment(plant_x, plant_y, start_x, start_y, end_x, end_y)
+                    < PATH_WIDTH / 2 + 16
+                    for (start_x, start_y), (end_x, end_y) in zip(
+                        self.path_points, self.path_points[1:]
+                    )
                 ):
                     continue
                 stem_len = 10 + ((x * 5 + y * 3) % 14)
@@ -1495,6 +1612,8 @@ class Game:
 
         if self.map_name == "Spiral":
             self.draw_grass_texture(surface)
+
+        self.draw_developer_stickman(surface)
 
         tower_info = TOWER_TYPES.get(self.selected_tower)
         if self.selected_tower == "mine":
@@ -1649,6 +1768,35 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
     coins = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
     surface.blit(coins, (40, 350))
 
+    pygame.draw.rect(surface, (85, 105, 145), BACKSTORY_RECT, border_radius=7)
+    pygame.draw.rect(surface, (180, 205, 245), BACKSTORY_RECT, 2, border_radius=7)
+    backstory_text = FONT.render("VIEW BACKSTORY", True, (255, 255, 255))
+    surface.blit(
+        backstory_text,
+        (
+            BACKSTORY_RECT.x + (BACKSTORY_RECT.width - backstory_text.get_width()) // 2,
+            BACKSTORY_RECT.y + (BACKSTORY_RECT.height - backstory_text.get_height()) // 2,
+        ),
+    )
+
+
+def draw_backstory(surface):
+    surface.fill((22, 28, 42))
+    title = FONT.render("The Monster Roads", True, (255, 225, 145))
+    surface.blit(title, (40, 44))
+    story_lines = [
+        "Another great war has occured, and the only survivors are",
+        "You and, sick-man stickman?!? Anyway, with the enemies",
+        "marching in, you have to stop them. Or else, they will",
+        "quickly end you. Let's hope sick-man stickman can help!",
+    ]
+    for index, line in enumerate(story_lines):
+        text = FONT.render(line, True, (225, 230, 240))
+        surface.blit(text, (50, 105 + index * 30))
+
+    controls = FONT.render("Click anywhere or press Escape to return", True, (180, 200, 225))
+    surface.blit(controls, (50, 370))
+
 
 def main():
     selected_map = DEFAULT_MAP
@@ -1657,6 +1805,7 @@ def main():
     _, menu_win_coins = load_progress()
     game = None
     in_menu = True
+    show_backstory = False
     running = True
 
     while running:
@@ -1667,6 +1816,10 @@ def main():
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
+                    if show_backstory:
+                        if event.key == pygame.K_ESCAPE:
+                            show_backstory = False
+                        continue
                     if event.unicode and event.unicode.isprintable():
                         if game is not None:
                             game.register_key(event.unicode)
@@ -1745,7 +1898,11 @@ def main():
                             game.selected_tower = "gunner"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if in_menu:
-                    if SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
+                    if show_backstory:
+                        show_backstory = False
+                    elif BACKSTORY_RECT.collidepoint(event.pos):
+                        show_backstory = True
+                    elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
                         if menu_win_coins >= MAP_UNLOCK_COST:
                             menu_win_coins -= MAP_UNLOCK_COST
                             unlocked_maps.add("Spiral")
@@ -1767,7 +1924,10 @@ def main():
                 game.end_enemy_drag()
 
         if in_menu:
-            draw_map_selection(SCREEN, selected_map, sandbox_mode, unlocked_maps, menu_win_coins)
+            if show_backstory:
+                draw_backstory(SCREEN)
+            else:
+                draw_map_selection(SCREEN, selected_map, sandbox_mode, unlocked_maps, menu_win_coins)
         else:
             game.update(dt)
             game.draw(SCREEN)

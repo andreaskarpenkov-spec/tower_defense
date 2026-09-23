@@ -10,6 +10,13 @@ from main import Enemy, Game, MAPS, MAP_UNLOCK_COST, TOWER_UNLOCK_WAVES, Tower, 
 
 
 class SandboxModeTest(unittest.TestCase):
+    def test_save_file_is_stored_with_game(self):
+        self.assertTrue(os.path.isabs(main.SAVE_FILE))
+        self.assertEqual(
+            os.path.dirname(main.SAVE_FILE),
+            os.path.dirname(os.path.abspath(main.__file__)),
+        )
+
     def test_gunner_unlocks_after_wave_six(self):
         self.assertEqual(TOWER_UNLOCK_WAVES["gunner"], 6)
 
