@@ -98,6 +98,91 @@ class SandboxModeTest(unittest.TestCase):
             if os.path.exists(save_path):
                 os.remove(save_path)
 
+    def test_stickman_costumes_are_saved_and_equipable(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 30,
+                "stickman_costumes": ["classic"],
+                "equipped_stickman_costume": "classic",
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertIn("classic", game.unlocked_stickman_costumes)
+                self.assertEqual(game.equipped_stickman_costume, "classic")
+                self.assertTrue(game.buy_stickman_costume("space"))
+                self.assertIn("space", game.unlocked_stickman_costumes)
+                self.assertEqual(game.equipped_stickman_costume, "space")
+                self.assertEqual(game.win_coins, 5)
+                with open(save_path, "r", encoding="utf-8") as save_handle:
+                    saved = json.load(save_handle)
+                self.assertIn("space", saved["stickman_costumes"])
+                self.assertEqual(saved["equipped_stickman_costume"], "space")
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_stickman_costume_button_unlocks_after_first_developer_mode(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 0,
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertFalse(game.stickman_costume_menu_unlocked)
+                self.assertFalse(game.stickman_costume_menu_open)
+
+                for key in "sick_man":
+                    game.register_key(key)
+
+                self.assertTrue(game.developer_mode)
+                self.assertTrue(game.stickman_costume_menu_unlocked)
+                self.assertFalse(game.stickman_costume_menu_open)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_developer_mode_flag_persists_in_save_file(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 0,
+                "developer_mode_opened": True,
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertTrue(game.stickman_costume_menu_unlocked)
+                for key in "sick_man":
+                    game.register_key(key)
+                with open(save_path, "r", encoding="utf-8") as save_handle:
+                    saved = json.load(save_handle)
+                self.assertTrue(saved["developer_mode_opened"])
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
     def test_sandbox_mode_unlocks_everything_and_ignores_loss(self):
         game = Game(MAPS["Classic"], sandbox=True)
 

@@ -132,6 +132,12 @@ TOWER_UNLOCK_WAVES = {
 
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 MAP_UNLOCK_COST = 20
+STICKMAN_COSTUMES = {
+    "classic": {"name": "Classic", "price": 0, "body": (35, 35, 48), "accent": (255, 220, 90), "shirt": (205, 65, 65), "hat": (255, 240, 180)},
+    "space": {"name": "Space Suit", "price": 25, "body": (55, 82, 130), "accent": (112, 214, 255), "shirt": (103, 177, 225), "hat": (240, 248, 255)},
+    "neon": {"name": "Neon", "price": 35, "body": (80, 40, 110), "accent": (255, 84, 208), "shirt": (255, 134, 84), "hat": (255, 255, 120)},
+    "royal": {"name": "Royal", "price": 45, "body": (94, 66, 34), "accent": (255, 208, 95), "shirt": (196, 140, 55), "hat": (255, 245, 200)},
+}
 
 
 def load_progress():
@@ -153,17 +159,57 @@ def load_progress():
     return {"basic"}, 0
 
 
+def load_developer_mode_state():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                return bool(data.get("developer_mode_opened", False))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return False
+
+
 def load_unlocks():
     unlocked_towers, _ = load_progress()
     return unlocked_towers
 
 
-def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None):
+def load_stickman_costumes():
+    default_costumes = {"classic"}
+    default_equipped = "classic"
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                unlocked = {
+                    costume_id for costume_id in data.get("stickman_costumes", []) if costume_id in STICKMAN_COSTUMES
+                }
+                if not unlocked:
+                    unlocked = default_costumes.copy()
+                equipped = data.get("equipped_stickman_costume", default_equipped)
+                if equipped not in STICKMAN_COSTUMES or equipped not in unlocked:
+                    equipped = next(iter(sorted(unlocked))) if unlocked else default_equipped
+                return unlocked, equipped
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return default_costumes.copy(), default_equipped
+
+
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None):
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
         if highest_cleared_wave is None:
             highest_cleared_wave = load_highest_cleared_wave()
+        if stickman_costumes is None:
+            stickman_costumes, _ = load_stickman_costumes()
+        if equipped_stickman_costume is None:
+            _, equipped_stickman_costume = load_stickman_costumes()
+        if developer_mode_opened is None:
+            developer_mode_opened = load_developer_mode_state()
+        if equipped_stickman_costume not in STICKMAN_COSTUMES:
+            equipped_stickman_costume = "classic"
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
             json.dump(
                 {
@@ -171,6 +217,9 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
                     "win_coins": int(win_coins),
                     "unlocked_maps": sorted(unlocked_maps),
                     "highest_cleared_wave": int(highest_cleared_wave),
+                    "stickman_costumes": sorted(stickman_costumes),
+                    "equipped_stickman_costume": equipped_stickman_costume,
+                    "developer_mode_opened": bool(developer_mode_opened),
                 },
                 save_file,
             )
@@ -231,6 +280,9 @@ DEFAULT_MAP = "Classic"
 FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
+HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
+HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 500)
+HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
 
 def load_unlocked_maps():
@@ -273,6 +325,28 @@ CLOCK = pygame.time.Clock()
 
 def clamp(value, minimum, maximum):
     return max(minimum, min(value, maximum))
+
+
+def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1):
+    costume = STICKMAN_COSTUMES.get(costume_id, STICKMAN_COSTUMES["classic"])
+    x = int(center_x)
+    y = int(center_y)
+    ink = (250, 250, 250)
+    accent = costume["accent"]
+    pygame.draw.circle(surface, accent, (x, y - 42), 17)
+    pygame.draw.circle(surface, ink, (x, y - 42), 17, 3)
+    pygame.draw.ellipse(surface, (25, 25, 35), (x - 34, y - 67, 68, 13))
+    pygame.draw.rect(surface, costume["body"], (x - 28, y - 89, 56, 29), border_radius=5)
+    pygame.draw.rect(surface, costume["shirt"], (x - 28, y - 68, 56, 9))
+    hat_text = pygame.font.SysFont("arial", 11, bold=True).render("sick-man", True, costume["hat"])
+    surface.blit(hat_text, (x - hat_text.get_width() // 2, y - 70))
+    pygame.draw.line(surface, ink, (x, y - 25), (x, y + 25), 5)
+    pygame.draw.line(surface, ink, (x, y - 9), (x - facing * 28, y + 10), 5)
+    pygame.draw.line(surface, ink, (x, y - 9), (x + facing * 28, y - 24), 5)
+    pygame.draw.line(surface, ink, (x, y + 25), (x - facing * 22, y + 58), 5)
+    pygame.draw.line(surface, ink, (x, y + 25), (x + facing * 22, y + 58), 5)
+    pygame.draw.circle(surface, accent, (x - 6, y - 46), 2)
+    pygame.draw.circle(surface, accent, (x + 6, y - 46), 2)
 
 
 class Enemy:
@@ -1038,12 +1112,20 @@ class Game:
         self.developer_stickman_vy = 95.0
         self.developer_stickman_time = 0.0
         self.developer_stickman_turn_timer = 0.0
+        self.stickman_costume_menu_unlocked = load_developer_mode_state()
+        self.stickman_costume_menu_open = False
+        self.stickman_costume_button_rect = pygame.Rect(20, 90, 170, 30)
+        self.stickman_costume_window_rect = pygame.Rect(220, 130, 400, 260)
+        self.stickman_costume_close_rect = pygame.Rect(548, 142, 52, 24)
+        self.unlocked_stickman_costumes, self.equipped_stickman_costume = load_stickman_costumes()
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
             self.money = 1_000_000
             self.lives = 1000
             _, self.win_coins = load_progress()
             self.highest_cleared_wave = max(TOWER_UNLOCK_WAVES.values(), default=0)
+            self.unlocked_stickman_costumes = set(STICKMAN_COSTUMES)
+            self.equipped_stickman_costume = self.equipped_stickman_costume if self.equipped_stickman_costume in self.unlocked_stickman_costumes else "classic"
         else:
             self.unlocked_towers, self.win_coins = load_progress()
             self.wave_six_cleared = load_highest_cleared_wave() >= 6
@@ -1051,6 +1133,8 @@ class Game:
             self.unlocked_towers.discard("gunner")
             if self.wave_six_cleared:
                 self.unlocked_towers.add("gunner")
+            if self.equipped_stickman_costume not in self.unlocked_stickman_costumes:
+                self.equipped_stickman_costume = "classic"
         if self.sandbox:
             self.wave_six_cleared = True
         self.victory_coins_awarded = False
@@ -1137,6 +1221,16 @@ class Game:
         if self.developer_buffer.endswith(self.developer_code):
             self.developer_mode = True
             self.developer_stickman_active = True
+            self.stickman_costume_menu_unlocked = True
+            save_unlocks(
+                self.unlocked_towers,
+                self.win_coins,
+                load_unlocked_maps(),
+                highest_cleared_wave=self.highest_cleared_wave,
+                stickman_costumes=self.unlocked_stickman_costumes,
+                equipped_stickman_costume=self.equipped_stickman_costume,
+                developer_mode_opened=True,
+            )
             self.developer_buffer = ""
 
     def toggle_enemy_pause(self):
@@ -1231,14 +1325,18 @@ class Game:
         y = int(self.developer_stickman_y)
         step = math.sin(self.developer_stickman_time * 10) * 7
         facing = 1 if self.developer_stickman_vx >= 0 else -1
+        costume = STICKMAN_COSTUMES.get(self.equipped_stickman_costume, STICKMAN_COSTUMES["classic"])
         ink = (250, 250, 250)
-        accent = (255, 220, 90)
+        accent = costume["accent"]
+        body = costume["body"]
+        shirt = costume["shirt"]
+        hat_color = costume["hat"]
         pygame.draw.circle(surface, accent, (x, y - 22), 9)
         pygame.draw.circle(surface, ink, (x, y - 22), 9, 2)
         pygame.draw.ellipse(surface, (25, 25, 35), (x - 18, y - 35, 36, 7))
-        pygame.draw.rect(surface, (35, 35, 48), (x - 15, y - 48, 30, 15), border_radius=3)
-        pygame.draw.rect(surface, (205, 65, 65), (x - 15, y - 37, 30, 5))
-        hat_text = pygame.font.SysFont("arial", 7, bold=True).render("sick-man", True, (255, 240, 180))
+        pygame.draw.rect(surface, body, (x - 15, y - 48, 30, 15), border_radius=3)
+        pygame.draw.rect(surface, shirt, (x - 15, y - 37, 30, 5))
+        hat_text = pygame.font.SysFont("arial", 7, bold=True).render("sick-man", True, hat_color)
         surface.blit(hat_text, (x - hat_text.get_width() // 2, y - 38))
         pygame.draw.line(surface, ink, (x, y - 13), (x, y + 12), 3)
         pygame.draw.line(surface, ink, (x, y - 5), (x - facing * 13, y + 5), 3)
@@ -1254,6 +1352,41 @@ class Game:
         if win_cost <= 0:
             return False
         return self.win_coins >= win_cost
+
+    def buy_stickman_costume(self, costume_id):
+        if costume_id not in STICKMAN_COSTUMES:
+            return False
+        costume_info = STICKMAN_COSTUMES[costume_id]
+        if costume_id in self.unlocked_stickman_costumes:
+            self.equipped_stickman_costume = costume_id
+            if not self.sandbox:
+                save_unlocks(
+                    self.unlocked_towers,
+                    self.win_coins,
+                    load_unlocked_maps(),
+                    highest_cleared_wave=self.highest_cleared_wave,
+                    stickman_costumes=self.unlocked_stickman_costumes,
+                    equipped_stickman_costume=self.equipped_stickman_costume,
+                )
+            return True
+        if self.sandbox:
+            self.unlocked_stickman_costumes.add(costume_id)
+            self.equipped_stickman_costume = costume_id
+            return True
+        if self.win_coins < costume_info["price"]:
+            return False
+        self.win_coins -= costume_info["price"]
+        self.unlocked_stickman_costumes.add(costume_id)
+        self.equipped_stickman_costume = costume_id
+        save_unlocks(
+            self.unlocked_towers,
+            self.win_coins,
+            load_unlocked_maps(),
+            highest_cleared_wave=self.highest_cleared_wave,
+            stickman_costumes=self.unlocked_stickman_costumes,
+            equipped_stickman_costume=self.equipped_stickman_costume,
+        )
+        return True
 
     def start_next_wave(self):
         if self.game_over or self.wave_index + 1 >= len(WAVES):
@@ -1576,6 +1709,24 @@ class Game:
     def handle_developer_spawn_click(self, mouse_pos):
         if not self.developer_mode:
             return False
+        if self.stickman_costume_menu_unlocked and self.stickman_costume_button_rect.collidepoint(mouse_pos):
+            self.stickman_costume_menu_open = not self.stickman_costume_menu_open
+            return True
+        if self.stickman_costume_menu_open:
+            if self.stickman_costume_close_rect.collidepoint(mouse_pos):
+                self.stickman_costume_menu_open = False
+                return True
+            if self.stickman_costume_window_rect.collidepoint(mouse_pos):
+                for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
+                    row = pygame.Rect(
+                        self.stickman_costume_window_rect.x + 18,
+                        self.stickman_costume_window_rect.y + 52 + index * 32,
+                        self.stickman_costume_window_rect.width - 36,
+                        24,
+                    )
+                    if row.collidepoint(mouse_pos):
+                        self.buy_stickman_costume(costume_id)
+                        return True
         for key, rect in self.developer_spawn_rects.items():
             if rect.collidepoint(mouse_pos):
                 if key == "spawn":
@@ -1660,6 +1811,38 @@ class Game:
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
+            if self.stickman_costume_menu_unlocked:
+                button_color = (110, 90, 150) if self.stickman_costume_menu_open else (90, 110, 160)
+                border_color = (220, 200, 255) if self.stickman_costume_menu_open else (180, 200, 230)
+                pygame.draw.rect(surface, button_color, self.stickman_costume_button_rect, border_radius=6)
+                pygame.draw.rect(surface, border_color, self.stickman_costume_button_rect, 2, border_radius=6)
+                button_text = FONT.render("Stickman costumes", True, (255, 255, 255))
+                surface.blit(button_text, (self.stickman_costume_button_rect.x + 12, self.stickman_costume_button_rect.y + 6))
+                if self.stickman_costume_menu_open:
+                    pygame.draw.rect(surface, (25, 30, 46), self.stickman_costume_window_rect, border_radius=10)
+                    pygame.draw.rect(surface, (175, 200, 240), self.stickman_costume_window_rect, 2, border_radius=10)
+                    title = FONT.render("Stickman costumes", True, (255, 255, 255))
+                    surface.blit(title, (self.stickman_costume_window_rect.x + 18, self.stickman_costume_window_rect.y + 16))
+                    pygame.draw.rect(surface, (115, 82, 82), self.stickman_costume_close_rect, border_radius=5)
+                    pygame.draw.rect(surface, (210, 160, 160), self.stickman_costume_close_rect, 2, border_radius=5)
+                    close_text = FONT.render("Close", True, (255, 255, 255))
+                    surface.blit(close_text, (self.stickman_costume_close_rect.x + 8, self.stickman_costume_close_rect.y + 3))
+                    for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
+                        row = pygame.Rect(
+                            self.stickman_costume_window_rect.x + 18,
+                            self.stickman_costume_window_rect.y + 52 + index * 32,
+                            self.stickman_costume_window_rect.width - 36,
+                            24,
+                        )
+                        owned = costume_id in self.unlocked_stickman_costumes
+                        enabled = costume_id == self.equipped_stickman_costume
+                        item_color = (95, 120, 80) if enabled else (75, 90, 105) if owned else (105, 90, 60)
+                        pygame.draw.rect(surface, item_color, row, border_radius=5)
+                        label = costume_info["name"] if owned else f"{costume_info['name']} ({costume_info['price']} win)"
+                        if enabled:
+                            label += " • equipped"
+                        item_text = FONT.render(label, True, (255, 255, 255))
+                        surface.blit(item_text, (row.x + 8, row.y + 3))
             spawn_button_y = 36
             self.developer_spawn_rects = {}
             enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter")]
@@ -1716,10 +1899,11 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_coins):
+def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_coins, unlocked_costumes, equipped_costume, developer_mode_opened=False, costume_window_open=False, preview_costume=None):
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
+    costume_buttons = {}
     for index, map_name in enumerate(MAPS.keys(), start=1):
         prefix = "> " if map_name == selected_map else "  "
         if map_name in unlocked_maps:
@@ -1761,6 +1945,46 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
         text = FONT.render(rule, True, (220, 220, 220))
         surface.blit(text, (440, 70 + index * 22))
 
+    if developer_mode_opened:
+        pygame.draw.rect(surface, (85, 105, 145), HOME_COSTUMES_RECT, border_radius=7)
+        pygame.draw.rect(surface, (180, 205, 245), HOME_COSTUMES_RECT, 2, border_radius=7)
+        costumes_text = FONT.render("COSTUMES", True, (255, 255, 255))
+        surface.blit(
+            costumes_text,
+            (
+                HOME_COSTUMES_RECT.x + (HOME_COSTUMES_RECT.width - costumes_text.get_width()) // 2,
+                HOME_COSTUMES_RECT.y + (HOME_COSTUMES_RECT.height - costumes_text.get_height()) // 2,
+            ),
+        )
+
+        if costume_window_open:
+            pygame.draw.rect(surface, (20, 27, 42), HOME_COSTUME_WINDOW_RECT, border_radius=10)
+            pygame.draw.rect(surface, (185, 210, 245), HOME_COSTUME_WINDOW_RECT, 2, border_radius=10)
+            title = FONT.render("Stickman costumes", True, (255, 255, 255))
+            surface.blit(title, (HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 18))
+            pygame.draw.rect(surface, (115, 82, 82), HOME_COSTUME_CLOSE_RECT, border_radius=5)
+            pygame.draw.rect(surface, (210, 160, 160), HOME_COSTUME_CLOSE_RECT, 2, border_radius=5)
+            close_text = FONT.render("Close", True, (255, 255, 255))
+            surface.blit(close_text, (HOME_COSTUME_CLOSE_RECT.x + 8, HOME_COSTUME_CLOSE_RECT.y + 3))
+            preview_id = preview_costume or equipped_costume
+            preview_info = STICKMAN_COSTUMES[preview_id]
+            preview_name = FONT.render(preview_info["name"], True, (255, 225, 145))
+            surface.blit(preview_name, (HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 62))
+            draw_stickman_preview(surface, HOME_COSTUME_WINDOW_RECT.x + 430, HOME_COSTUME_WINDOW_RECT.y + 165, preview_id)
+            for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
+                rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 62 + index * 38, 250, 28)
+                costume_buttons[costume_id] = rect
+                owned = costume_id in unlocked_costumes
+                equipped = costume_id == equipped_costume
+                color = (75, 110, 85) if owned and equipped else (70, 90, 100) if owned else (100, 82, 54)
+                pygame.draw.rect(surface, color, rect, border_radius=5)
+                pygame.draw.rect(surface, (200, 220, 240), rect, 1, border_radius=5)
+                label = costume_info["name"] if owned else f"{costume_info['name']} ({costume_info['price']} win)"
+                if equipped:
+                    label += " (equipped)"
+                text = FONT.render(label, True, (240, 240, 240))
+                surface.blit(text, (rect.x + 8, rect.y + 5))
+
     info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
     surface.blit(info, (40, 270))
     note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
@@ -1778,6 +2002,7 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
             BACKSTORY_RECT.y + (BACKSTORY_RECT.height - backstory_text.get_height()) // 2,
         ),
     )
+    return costume_buttons
 
 
 def draw_backstory(surface):
@@ -1803,13 +2028,21 @@ def main():
     sandbox_mode = False
     unlocked_maps = load_unlocked_maps()
     _, menu_win_coins = load_progress()
+    menu_developer_mode_opened = load_developer_mode_state()
+    menu_stickman_costumes, menu_equipped_costume = load_stickman_costumes()
     game = None
     in_menu = True
     show_backstory = False
+    show_costume_window = False
+    preview_costume = menu_equipped_costume
     running = True
+    menu_costume_buttons = {}
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
+        if in_menu:
+            menu_developer_mode_opened = load_developer_mode_state()
+            menu_stickman_costumes, menu_equipped_costume = load_stickman_costumes()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -1819,6 +2052,9 @@ def main():
                     if show_backstory:
                         if event.key == pygame.K_ESCAPE:
                             show_backstory = False
+                        continue
+                    if show_costume_window and event.key == pygame.K_ESCAPE:
+                        show_costume_window = False
                         continue
                     if event.unicode and event.unicode.isprintable():
                         if game is not None:
@@ -1900,8 +2136,42 @@ def main():
                 if in_menu:
                     if show_backstory:
                         show_backstory = False
+                    elif show_costume_window:
+                        if HOME_COSTUME_CLOSE_RECT.collidepoint(event.pos):
+                            show_costume_window = False
+                        else:
+                            for costume_id, rect in menu_costume_buttons.items():
+                                if rect.collidepoint(event.pos):
+                                    preview_costume = costume_id
+                                    if costume_id in menu_stickman_costumes:
+                                        menu_equipped_costume = costume_id
+                                        if not sandbox_mode:
+                                            save_unlocks(
+                                                load_unlocks(),
+                                                menu_win_coins,
+                                                unlocked_maps,
+                                                stickman_costumes=menu_stickman_costumes,
+                                                equipped_stickman_costume=menu_equipped_costume,
+                                                developer_mode_opened=menu_developer_mode_opened,
+                                            )
+                                    elif menu_win_coins >= STICKMAN_COSTUMES[costume_id]["price"]:
+                                        menu_win_coins -= STICKMAN_COSTUMES[costume_id]["price"]
+                                        menu_stickman_costumes.add(costume_id)
+                                        menu_equipped_costume = costume_id
+                                        if not sandbox_mode:
+                                            save_unlocks(
+                                                load_unlocks(),
+                                                menu_win_coins,
+                                                unlocked_maps,
+                                                stickman_costumes=menu_stickman_costumes,
+                                                equipped_stickman_costume=menu_equipped_costume,
+                                                developer_mode_opened=menu_developer_mode_opened,
+                                            )
+                                    break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
+                    elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
+                        show_costume_window = True
                     elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
                         if menu_win_coins >= MAP_UNLOCK_COST:
                             menu_win_coins -= MAP_UNLOCK_COST
@@ -1909,6 +2179,34 @@ def main():
                             selected_map = "Spiral"
                             if not sandbox_mode:
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
+                    elif menu_developer_mode_opened:
+                        for costume_id, rect in menu_costume_buttons.items():
+                            if rect.collidepoint(event.pos):
+                                if costume_id in menu_stickman_costumes:
+                                    menu_equipped_costume = costume_id
+                                    if not sandbox_mode:
+                                        save_unlocks(
+                                            load_unlocks(),
+                                            menu_win_coins,
+                                            unlocked_maps,
+                                            stickman_costumes=menu_stickman_costumes,
+                                            equipped_stickman_costume=menu_equipped_costume,
+                                            developer_mode_opened=menu_developer_mode_opened,
+                                        )
+                                elif menu_win_coins >= STICKMAN_COSTUMES[costume_id]["price"]:
+                                    menu_win_coins -= STICKMAN_COSTUMES[costume_id]["price"]
+                                    menu_stickman_costumes.add(costume_id)
+                                    menu_equipped_costume = costume_id
+                                    if not sandbox_mode:
+                                        save_unlocks(
+                                            load_unlocks(),
+                                            menu_win_coins,
+                                            unlocked_maps,
+                                            stickman_costumes=menu_stickman_costumes,
+                                            equipped_stickman_costume=menu_equipped_costume,
+                                            developer_mode_opened=menu_developer_mode_opened,
+                                        )
+                                break
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
                         pass
@@ -1927,7 +2225,18 @@ def main():
             if show_backstory:
                 draw_backstory(SCREEN)
             else:
-                draw_map_selection(SCREEN, selected_map, sandbox_mode, unlocked_maps, menu_win_coins)
+                menu_costume_buttons = draw_map_selection(
+                    SCREEN,
+                    selected_map,
+                    sandbox_mode,
+                    unlocked_maps,
+                    menu_win_coins,
+                    menu_stickman_costumes,
+                    menu_equipped_costume,
+                    menu_developer_mode_opened,
+                    show_costume_window,
+                    preview_costume,
+                )
         else:
             game.update(dt)
             game.draw(SCREEN)
