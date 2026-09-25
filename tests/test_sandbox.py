@@ -113,21 +113,80 @@ class SandboxModeTest(unittest.TestCase):
             main.SAVE_FILE = save_path
             try:
                 game = Game(MAPS["Classic"])
-                self.assertIn("classic", game.unlocked_stickman_costumes)
+                self.assertEqual(game.unlocked_stickman_costumes, {"classic"})
                 self.assertEqual(game.equipped_stickman_costume, "classic")
-                self.assertTrue(game.buy_stickman_costume("space"))
-                self.assertIn("space", game.unlocked_stickman_costumes)
-                self.assertEqual(game.equipped_stickman_costume, "space")
-                self.assertEqual(game.win_coins, 5)
+                self.assertTrue(game.buy_stickman_costume("classic"))
+                self.assertEqual(game.equipped_stickman_costume, "classic")
+                self.assertEqual(game.win_coins, 30)
                 with open(save_path, "r", encoding="utf-8") as save_handle:
                     saved = json.load(save_handle)
-                self.assertIn("space", saved["stickman_costumes"])
-                self.assertEqual(saved["equipped_stickman_costume"], "space")
+                self.assertEqual(saved["stickman_costumes"], ["classic"])
+                self.assertEqual(saved["equipped_stickman_costume"], "classic")
             finally:
                 main.SAVE_FILE = original_save_file
         finally:
             if os.path.exists(save_path):
                 os.remove(save_path)
+
+    def test_hat_text_can_be_purchased_in_costume_window(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 10,
+                "stickman_hat_text": "sick-man",
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertEqual(game.stickman_hat_text, "sick-man")
+                self.assertTrue(game.buy_hat_text("sick-man-2"))
+                self.assertEqual(game.stickman_hat_text, "sick-man-2")
+                self.assertEqual(game.win_coins, 5)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_loser_hat_costs_10_win_coins_and_persists(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 12}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertEqual(game.stickman_hat, "classic")
+                self.assertTrue(game.buy_stickman_hat("loser"))
+                self.assertEqual(game.stickman_hat, "loser")
+                self.assertEqual(game.win_coins, 2)
+                self.assertTrue(game.buy_stickman_hat("classic"))
+                self.assertTrue(game.buy_stickman_hat("loser"))
+                self.assertEqual(game.win_coins, 2)
+                with open(save_path, "r", encoding="utf-8") as save_handle:
+                    saved = json.load(save_handle)
+                self.assertEqual(saved["stickman_hat"], "loser")
+                self.assertEqual(saved["win_coins"], 2)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_additional_hat_prices(self):
+        self.assertEqual(main.STICKMAN_HATS["war"]["price"], 5)
+        self.assertEqual(main.STICKMAN_HATS["wizard"]["price"], 15)
+        self.assertEqual(main.STICKMAN_HATS["headphones"]["price"], 10)
+        self.assertEqual(main.STICKMAN_HATS["graduation"]["price"], 10)
+        self.assertEqual(main.STICKMAN_HATS["bicycle"]["price"], 10)
+        self.assertEqual(main.STICKMAN_HATS["cardboard"]["price"], 15)
+        self.assertEqual(main.STICKMAN_HATS["powder"]["price"], 10)
 
     def test_stickman_costume_button_unlocks_after_first_developer_mode(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

@@ -134,9 +134,17 @@ SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.j
 MAP_UNLOCK_COST = 20
 STICKMAN_COSTUMES = {
     "classic": {"name": "Classic", "price": 0, "body": (35, 35, 48), "accent": (255, 220, 90), "shirt": (205, 65, 65), "hat": (255, 240, 180)},
-    "space": {"name": "Space Suit", "price": 25, "body": (55, 82, 130), "accent": (112, 214, 255), "shirt": (103, 177, 225), "hat": (240, 248, 255)},
-    "neon": {"name": "Neon", "price": 35, "body": (80, 40, 110), "accent": (255, 84, 208), "shirt": (255, 134, 84), "hat": (255, 255, 120)},
-    "royal": {"name": "Royal", "price": 45, "body": (94, 66, 34), "accent": (255, 208, 95), "shirt": (196, 140, 55), "hat": (255, 245, 200)},
+}
+STICKMAN_HATS = {
+    "classic": {"name": "Sick-man Hat", "price": 0},
+    "loser": {"name": "Loser Hat", "price": 10},
+    "war": {"name": "War Helmet", "price": 5},
+    "wizard": {"name": "Wizard Hat", "price": 15},
+    "headphones": {"name": "Headphones", "price": 10},
+    "graduation": {"name": "Graduation Hat", "price": 10},
+    "bicycle": {"name": "Bicycle Helmet", "price": 10},
+    "cardboard": {"name": "Cardboard Box", "price": 15},
+    "powder": {"name": "Powder Wig", "price": 10},
 }
 
 
@@ -196,7 +204,46 @@ def load_stickman_costumes():
     return default_costumes.copy(), default_equipped
 
 
-def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None):
+def load_stickman_hat_text():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                text = str(data.get("stickman_hat_text", "sick-man") or "sick-man").strip()
+                if text:
+                    return text[:16]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return "sick-man"
+
+
+def load_stickman_hat():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict) and data.get("stickman_hat") in STICKMAN_HATS:
+                return data["stickman_hat"]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return "classic"
+
+
+def load_stickman_hats():
+    unlocked = {"classic"}
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                unlocked.update(hat_id for hat_id in data.get("stickman_hats", []) if hat_id in STICKMAN_HATS)
+                equipped = data.get("stickman_hat")
+                if equipped in STICKMAN_HATS:
+                    unlocked.add(equipped)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return unlocked
+
+
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None):
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
@@ -208,6 +255,15 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
             _, equipped_stickman_costume = load_stickman_costumes()
         if developer_mode_opened is None:
             developer_mode_opened = load_developer_mode_state()
+        if stickman_hat_text is None:
+            stickman_hat_text = load_stickman_hat_text()
+        if stickman_hat is None:
+            stickman_hat = load_stickman_hat()
+        if stickman_hat not in STICKMAN_HATS:
+            stickman_hat = "classic"
+        if stickman_hats is None:
+            stickman_hats = load_stickman_hats()
+        stickman_hats = set(stickman_hats) | {"classic", stickman_hat}
         if equipped_stickman_costume not in STICKMAN_COSTUMES:
             equipped_stickman_costume = "classic"
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
@@ -219,6 +275,9 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
                     "highest_cleared_wave": int(highest_cleared_wave),
                     "stickman_costumes": sorted(stickman_costumes),
                     "equipped_stickman_costume": equipped_stickman_costume,
+                    "stickman_hat_text": str(stickman_hat_text or "sick-man")[:16],
+                    "stickman_hat": stickman_hat,
+                    "stickman_hats": sorted(stickman_hats),
                     "developer_mode_opened": bool(developer_mode_opened),
                 },
                 save_file,
@@ -327,7 +386,7 @@ def clamp(value, minimum, maximum):
     return max(minimum, min(value, maximum))
 
 
-def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1):
+def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat_id="classic", hat_text="sick-man"):
     costume = STICKMAN_COSTUMES.get(costume_id, STICKMAN_COSTUMES["classic"])
     x = int(center_x)
     y = int(center_y)
@@ -335,11 +394,48 @@ def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1):
     accent = costume["accent"]
     pygame.draw.circle(surface, accent, (x, y - 42), 17)
     pygame.draw.circle(surface, ink, (x, y - 42), 17, 3)
-    pygame.draw.ellipse(surface, (25, 25, 35), (x - 34, y - 67, 68, 13))
-    pygame.draw.rect(surface, costume["body"], (x - 28, y - 89, 56, 29), border_radius=5)
-    pygame.draw.rect(surface, costume["shirt"], (x - 28, y - 68, 56, 9))
-    hat_text = pygame.font.SysFont("arial", 11, bold=True).render("sick-man", True, costume["hat"])
-    surface.blit(hat_text, (x - hat_text.get_width() // 2, y - 70))
+    if hat_id == "loser":
+        pygame.draw.polygon(surface, (125, 125, 135), [(x - 20, y - 65), (x + 20, y - 65), (x, y - 103)])
+        pygame.draw.ellipse(surface, (80, 80, 90), (x - 26, y - 70, 52, 13))
+        rendered_hat_text = pygame.font.SysFont("arial", 12, bold=True).render("L", True, (230, 230, 240))
+        surface.blit(rendered_hat_text, (x - rendered_hat_text.get_width() // 2, y - 81))
+    elif hat_id == "war":
+        pygame.draw.ellipse(surface, (85, 95, 110), (x - 28, y - 78, 56, 28))
+        pygame.draw.rect(surface, (125, 135, 150), (x - 31, y - 69, 62, 10), border_radius=4)
+        pygame.draw.polygon(surface, (210, 70, 70), [(x - 5, y - 78), (x, y - 94), (x + 5, y - 78)])
+    elif hat_id == "wizard":
+        pygame.draw.polygon(surface, (75, 45, 125), [(x - 22, y - 66), (x + 22, y - 66), (x + 4, y - 108), (x - 5, y - 108)])
+        pygame.draw.ellipse(surface, (45, 25, 80), (x - 27, y - 71, 54, 13))
+        pygame.draw.circle(surface, (245, 220, 90), (x - 7, y - 79), 3)
+    elif hat_id == "headphones":
+        pygame.draw.arc(surface, (70, 190, 220), (x - 28, y - 75, 56, 48), 0, math.pi, 5)
+        pygame.draw.rect(surface, (70, 190, 220), (x - 31, y - 55, 9, 20), border_radius=4)
+        pygame.draw.rect(surface, (70, 190, 220), (x + 22, y - 55, 9, 20), border_radius=4)
+    elif hat_id == "graduation":
+        pygame.draw.polygon(surface, (35, 35, 45), [(x - 30, y - 71), (x, y - 84), (x + 30, y - 71), (x, y - 58)])
+        pygame.draw.rect(surface, (55, 55, 65), (x - 17, y - 65, 34, 12))
+        pygame.draw.line(surface, (245, 210, 80), (x + 20, y - 70), (x + 26, y - 47), 2)
+        pygame.draw.circle(surface, (245, 210, 80), (x + 26, y - 45), 3)
+    elif hat_id == "bicycle":
+        pygame.draw.ellipse(surface, (235, 70, 55), (x - 27, y - 80, 54, 30))
+        pygame.draw.rect(surface, (245, 220, 90), (x - 29, y - 68, 58, 8), border_radius=4)
+        pygame.draw.line(surface, (170, 40, 35), (x - 12, y - 80), (x - 18, y - 68), 3)
+        pygame.draw.line(surface, (170, 40, 35), (x + 4, y - 80), (x + 10, y - 68), 3)
+    elif hat_id == "cardboard":
+        pygame.draw.rect(surface, (170, 115, 55), (x - 28, y - 88, 56, 30), border_radius=2)
+        pygame.draw.line(surface, (115, 75, 35), (x, y - 88), (x, y - 58), 2)
+        pygame.draw.line(surface, (115, 75, 35), (x - 28, y - 73), (x + 28, y - 73), 2)
+    elif hat_id == "powder":
+        pygame.draw.circle(surface, (245, 245, 240), (x - 18, y - 74), 15)
+        pygame.draw.circle(surface, (245, 245, 240), (x, y - 82), 17)
+        pygame.draw.circle(surface, (245, 245, 240), (x + 18, y - 74), 15)
+        pygame.draw.ellipse(surface, (225, 225, 220), (x - 30, y - 72, 60, 13))
+    else:
+        pygame.draw.ellipse(surface, (25, 25, 35), (x - 34, y - 67, 68, 13))
+        pygame.draw.rect(surface, costume["body"], (x - 28, y - 89, 56, 29), border_radius=5)
+        pygame.draw.rect(surface, costume["shirt"], (x - 28, y - 68, 56, 9))
+        rendered_hat_text = pygame.font.SysFont("arial", 11, bold=True).render(hat_text, True, costume["hat"])
+        surface.blit(rendered_hat_text, (x - rendered_hat_text.get_width() // 2, y - 70))
     pygame.draw.line(surface, ink, (x, y - 25), (x, y + 25), 5)
     pygame.draw.line(surface, ink, (x, y - 9), (x - facing * 28, y + 10), 5)
     pygame.draw.line(surface, ink, (x, y - 9), (x + facing * 28, y - 24), 5)
@@ -1117,6 +1213,9 @@ class Game:
         self.stickman_costume_button_rect = pygame.Rect(20, 90, 170, 30)
         self.stickman_costume_window_rect = pygame.Rect(220, 130, 400, 260)
         self.stickman_costume_close_rect = pygame.Rect(548, 142, 52, 24)
+        self.stickman_hat_text = load_stickman_hat_text()
+        self.stickman_hat = load_stickman_hat()
+        self.unlocked_stickman_hats = load_stickman_hats()
         self.unlocked_stickman_costumes, self.equipped_stickman_costume = load_stickman_costumes()
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
@@ -1318,6 +1417,54 @@ class Game:
             if math.hypot(enemy.x - self.developer_stickman_x, enemy.y - self.developer_stickman_y) <= 25:
                 enemy.loser_hat = True
 
+    def buy_hat_text(self, new_text):
+        cleaned = str(new_text or "").strip()[:16]
+        if not cleaned:
+            return False
+        if self.sandbox:
+            self.stickman_hat_text = cleaned
+            return True
+        if self.win_coins < 5:
+            return False
+        self.win_coins -= 5
+        self.stickman_hat_text = cleaned
+        save_unlocks(
+            self.unlocked_towers,
+            self.win_coins,
+            load_unlocked_maps(),
+            highest_cleared_wave=self.highest_cleared_wave,
+            stickman_costumes=self.unlocked_stickman_costumes,
+            equipped_stickman_costume=self.equipped_stickman_costume,
+            developer_mode_opened=self.stickman_costume_menu_unlocked,
+            stickman_hat_text=self.stickman_hat_text,
+        )
+        return True
+
+    def buy_stickman_hat(self, hat_id):
+        if hat_id not in STICKMAN_HATS:
+            return False
+        hat_info = STICKMAN_HATS[hat_id]
+        if hat_id not in self.unlocked_stickman_hats and not self.sandbox:
+            if self.win_coins < hat_info["price"]:
+                return False
+            self.win_coins -= hat_info["price"]
+        self.unlocked_stickman_hats.add(hat_id)
+        self.stickman_hat = hat_id
+        if not self.sandbox:
+            save_unlocks(
+                self.unlocked_towers,
+                self.win_coins,
+                load_unlocked_maps(),
+                highest_cleared_wave=self.highest_cleared_wave,
+                stickman_costumes=self.unlocked_stickman_costumes,
+                equipped_stickman_costume=self.equipped_stickman_costume,
+                developer_mode_opened=self.stickman_costume_menu_unlocked,
+                stickman_hat_text=self.stickman_hat_text,
+                stickman_hat=self.stickman_hat,
+                stickman_hats=self.unlocked_stickman_hats,
+            )
+        return True
+
     def draw_developer_stickman(self, surface):
         if not self.developer_stickman_active:
             return
@@ -1333,11 +1480,48 @@ class Game:
         hat_color = costume["hat"]
         pygame.draw.circle(surface, accent, (x, y - 22), 9)
         pygame.draw.circle(surface, ink, (x, y - 22), 9, 2)
-        pygame.draw.ellipse(surface, (25, 25, 35), (x - 18, y - 35, 36, 7))
-        pygame.draw.rect(surface, body, (x - 15, y - 48, 30, 15), border_radius=3)
-        pygame.draw.rect(surface, shirt, (x - 15, y - 37, 30, 5))
-        hat_text = pygame.font.SysFont("arial", 7, bold=True).render("sick-man", True, hat_color)
-        surface.blit(hat_text, (x - hat_text.get_width() // 2, y - 38))
+        if self.stickman_hat == "loser":
+            pygame.draw.polygon(surface, (125, 125, 135), [(x - 11, y - 32), (x + 11, y - 32), (x, y - 52)])
+            pygame.draw.ellipse(surface, (80, 80, 90), (x - 14, y - 36, 28, 7))
+            rendered_hat_text = pygame.font.SysFont("arial", 8, bold=True).render("L", True, (230, 230, 240))
+            surface.blit(rendered_hat_text, (x - rendered_hat_text.get_width() // 2, y - 43))
+        elif self.stickman_hat == "war":
+            pygame.draw.ellipse(surface, (85, 95, 110), (x - 16, y - 39, 32, 17))
+            pygame.draw.rect(surface, (125, 135, 150), (x - 18, y - 34, 36, 6), border_radius=3)
+            pygame.draw.polygon(surface, (210, 70, 70), [(x - 3, y - 39), (x, y - 49), (x + 3, y - 39)])
+        elif self.stickman_hat == "wizard":
+            pygame.draw.polygon(surface, (75, 45, 125), [(x - 11, y - 33), (x + 11, y - 33), (x + 2, y - 57), (x - 3, y - 57)])
+            pygame.draw.ellipse(surface, (45, 25, 80), (x - 14, y - 37, 28, 7))
+            pygame.draw.circle(surface, (245, 220, 90), (x - 4, y - 42), 2)
+        elif self.stickman_hat == "headphones":
+            pygame.draw.arc(surface, (70, 190, 220), (x - 14, y - 39, 28, 25), 0, math.pi, 3)
+            pygame.draw.rect(surface, (70, 190, 220), (x - 16, y - 29, 5, 11), border_radius=2)
+            pygame.draw.rect(surface, (70, 190, 220), (x + 11, y - 29, 5, 11), border_radius=2)
+        elif self.stickman_hat == "graduation":
+            pygame.draw.polygon(surface, (35, 35, 45), [(x - 15, y - 37), (x, y - 44), (x + 15, y - 37), (x, y - 30)])
+            pygame.draw.rect(surface, (55, 55, 65), (x - 9, y - 34, 18, 6))
+            pygame.draw.line(surface, (245, 210, 80), (x + 10, y - 37), (x + 13, y - 25), 1)
+            pygame.draw.circle(surface, (245, 210, 80), (x + 13, y - 24), 2)
+        elif self.stickman_hat == "bicycle":
+            pygame.draw.ellipse(surface, (235, 70, 55), (x - 14, y - 40, 28, 16))
+            pygame.draw.rect(surface, (245, 220, 90), (x - 15, y - 34, 30, 5), border_radius=2)
+            pygame.draw.line(surface, (170, 40, 35), (x - 6, y - 40), (x - 9, y - 34), 2)
+            pygame.draw.line(surface, (170, 40, 35), (x + 2, y - 40), (x + 5, y - 34), 2)
+        elif self.stickman_hat == "cardboard":
+            pygame.draw.rect(surface, (170, 115, 55), (x - 14, y - 44, 28, 16), border_radius=1)
+            pygame.draw.line(surface, (115, 75, 35), (x, y - 44), (x, y - 28), 1)
+            pygame.draw.line(surface, (115, 75, 35), (x - 14, y - 36), (x + 14, y - 36), 1)
+        elif self.stickman_hat == "powder":
+            pygame.draw.circle(surface, (245, 245, 240), (x - 9, y - 36), 8)
+            pygame.draw.circle(surface, (245, 245, 240), (x, y - 40), 9)
+            pygame.draw.circle(surface, (245, 245, 240), (x + 9, y - 36), 8)
+            pygame.draw.ellipse(surface, (225, 225, 220), (x - 15, y - 37, 30, 7))
+        else:
+            pygame.draw.ellipse(surface, (25, 25, 35), (x - 18, y - 35, 36, 7))
+            pygame.draw.rect(surface, body, (x - 15, y - 48, 30, 15), border_radius=3)
+            pygame.draw.rect(surface, shirt, (x - 15, y - 37, 30, 5))
+            rendered_hat_text = pygame.font.SysFont("arial", 7, bold=True).render(self.stickman_hat_text, True, hat_color)
+            surface.blit(rendered_hat_text, (x - rendered_hat_text.get_width() // 2, y - 38))
         pygame.draw.line(surface, ink, (x, y - 13), (x, y + 12), 3)
         pygame.draw.line(surface, ink, (x, y - 5), (x - facing * 13, y + 5), 3)
         pygame.draw.line(surface, ink, (x, y - 5), (x + facing * 13, y - 12), 3)
@@ -1709,24 +1893,6 @@ class Game:
     def handle_developer_spawn_click(self, mouse_pos):
         if not self.developer_mode:
             return False
-        if self.stickman_costume_menu_unlocked and self.stickman_costume_button_rect.collidepoint(mouse_pos):
-            self.stickman_costume_menu_open = not self.stickman_costume_menu_open
-            return True
-        if self.stickman_costume_menu_open:
-            if self.stickman_costume_close_rect.collidepoint(mouse_pos):
-                self.stickman_costume_menu_open = False
-                return True
-            if self.stickman_costume_window_rect.collidepoint(mouse_pos):
-                for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
-                    row = pygame.Rect(
-                        self.stickman_costume_window_rect.x + 18,
-                        self.stickman_costume_window_rect.y + 52 + index * 32,
-                        self.stickman_costume_window_rect.width - 36,
-                        24,
-                    )
-                    if row.collidepoint(mouse_pos):
-                        self.buy_stickman_costume(costume_id)
-                        return True
         for key, rect in self.developer_spawn_rects.items():
             if rect.collidepoint(mouse_pos):
                 if key == "spawn":
@@ -1811,38 +1977,6 @@ class Game:
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
-            if self.stickman_costume_menu_unlocked:
-                button_color = (110, 90, 150) if self.stickman_costume_menu_open else (90, 110, 160)
-                border_color = (220, 200, 255) if self.stickman_costume_menu_open else (180, 200, 230)
-                pygame.draw.rect(surface, button_color, self.stickman_costume_button_rect, border_radius=6)
-                pygame.draw.rect(surface, border_color, self.stickman_costume_button_rect, 2, border_radius=6)
-                button_text = FONT.render("Stickman costumes", True, (255, 255, 255))
-                surface.blit(button_text, (self.stickman_costume_button_rect.x + 12, self.stickman_costume_button_rect.y + 6))
-                if self.stickman_costume_menu_open:
-                    pygame.draw.rect(surface, (25, 30, 46), self.stickman_costume_window_rect, border_radius=10)
-                    pygame.draw.rect(surface, (175, 200, 240), self.stickman_costume_window_rect, 2, border_radius=10)
-                    title = FONT.render("Stickman costumes", True, (255, 255, 255))
-                    surface.blit(title, (self.stickman_costume_window_rect.x + 18, self.stickman_costume_window_rect.y + 16))
-                    pygame.draw.rect(surface, (115, 82, 82), self.stickman_costume_close_rect, border_radius=5)
-                    pygame.draw.rect(surface, (210, 160, 160), self.stickman_costume_close_rect, 2, border_radius=5)
-                    close_text = FONT.render("Close", True, (255, 255, 255))
-                    surface.blit(close_text, (self.stickman_costume_close_rect.x + 8, self.stickman_costume_close_rect.y + 3))
-                    for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
-                        row = pygame.Rect(
-                            self.stickman_costume_window_rect.x + 18,
-                            self.stickman_costume_window_rect.y + 52 + index * 32,
-                            self.stickman_costume_window_rect.width - 36,
-                            24,
-                        )
-                        owned = costume_id in self.unlocked_stickman_costumes
-                        enabled = costume_id == self.equipped_stickman_costume
-                        item_color = (95, 120, 80) if enabled else (75, 90, 105) if owned else (105, 90, 60)
-                        pygame.draw.rect(surface, item_color, row, border_radius=5)
-                        label = costume_info["name"] if owned else f"{costume_info['name']} ({costume_info['price']} win)"
-                        if enabled:
-                            label += " • equipped"
-                        item_text = FONT.render(label, True, (255, 255, 255))
-                        surface.blit(item_text, (row.x + 8, row.y + 3))
             spawn_button_y = 36
             self.developer_spawn_rects = {}
             enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter")]
@@ -1899,7 +2033,24 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_coins, unlocked_costumes, equipped_costume, developer_mode_opened=False, costume_window_open=False, preview_costume=None):
+def draw_map_selection(
+    surface,
+    selected_map,
+    sandbox_mode,
+    unlocked_maps,
+    win_coins,
+    unlocked_costumes,
+    equipped_costume,
+    developer_mode_opened=False,
+    costume_window_open=False,
+    preview_costume=None,
+    hat_text_value="sick-man",
+    hat_text_editing=False,
+    hat_text_input="sick-man",
+    hat_id="classic",
+    unlocked_hats=None,
+):
+    unlocked_hats = set(unlocked_hats or {"classic"})
     surface.fill((18, 24, 36))
     title = FONT.render("Select a map before starting:", True, (255, 255, 255))
     surface.blit(title, (40, 40))
@@ -1956,7 +2107,6 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
                 HOME_COSTUMES_RECT.y + (HOME_COSTUMES_RECT.height - costumes_text.get_height()) // 2,
             ),
         )
-
         if costume_window_open:
             pygame.draw.rect(surface, (20, 27, 42), HOME_COSTUME_WINDOW_RECT, border_radius=10)
             pygame.draw.rect(surface, (185, 210, 245), HOME_COSTUME_WINDOW_RECT, 2, border_radius=10)
@@ -1967,41 +2117,103 @@ def draw_map_selection(surface, selected_map, sandbox_mode, unlocked_maps, win_c
             close_text = FONT.render("Close", True, (255, 255, 255))
             surface.blit(close_text, (HOME_COSTUME_CLOSE_RECT.x + 8, HOME_COSTUME_CLOSE_RECT.y + 3))
             preview_id = preview_costume or equipped_costume
-            preview_info = STICKMAN_COSTUMES[preview_id]
-            preview_name = FONT.render(preview_info["name"], True, (255, 225, 145))
+            preview_name = FONT.render(STICKMAN_COSTUMES[preview_id]["name"], True, (255, 225, 145))
             surface.blit(preview_name, (HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 62))
-            draw_stickman_preview(surface, HOME_COSTUME_WINDOW_RECT.x + 430, HOME_COSTUME_WINDOW_RECT.y + 165, preview_id)
-            for index, (costume_id, costume_info) in enumerate(STICKMAN_COSTUMES.items()):
-                rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 62 + index * 38, 250, 28)
-                costume_buttons[costume_id] = rect
-                owned = costume_id in unlocked_costumes
-                equipped = costume_id == equipped_costume
-                color = (75, 110, 85) if owned and equipped else (70, 90, 100) if owned else (100, 82, 54)
-                pygame.draw.rect(surface, color, rect, border_radius=5)
-                pygame.draw.rect(surface, (200, 220, 240), rect, 1, border_radius=5)
-                label = costume_info["name"] if owned else f"{costume_info['name']} ({costume_info['price']} win)"
-                if equipped:
-                    label += " (equipped)"
-                text = FONT.render(label, True, (240, 240, 240))
-                surface.blit(text, (rect.x + 8, rect.y + 5))
+            draw_stickman_preview(
+                surface,
+                HOME_COSTUME_WINDOW_RECT.x + 430,
+                HOME_COSTUME_WINDOW_RECT.y + 165,
+                preview_id,
+                hat_id=hat_id,
+                hat_text=hat_text_value,
+            )
+            costumes_section = FONT.render("Costumes", True, (170, 200, 235))
+            surface.blit(costumes_section, (HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 42))
+            rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 62, 250, 28)
+            costume_buttons["classic"] = rect
+            color = (75, 110, 85) if preview_id == "classic" else (70, 90, 100)
+            pygame.draw.rect(surface, color, rect, border_radius=5)
+            pygame.draw.rect(surface, (200, 220, 240), rect, 1, border_radius=5)
+            label = "Classic (equipped)" if equipped_costume == "classic" else "Classic"
+            text = FONT.render(label, True, (240, 240, 240))
+            surface.blit(text, (rect.x + 8, rect.y + 5))
+            hats_section = FONT.render("Hats", True, (240, 210, 150))
+            surface.blit(hats_section, (HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 102))
+            hat_text_rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 126, 250, 28)
+            costume_buttons["hat_text"] = hat_text_rect
+            fill_color = (120, 100, 80) if hat_text_editing else (95, 86, 62)
+            pygame.draw.rect(surface, fill_color, hat_text_rect, border_radius=5)
+            pygame.draw.rect(surface, (240, 216, 180), hat_text_rect, 1, border_radius=5)
+            button_label = "Press Enter to save" if hat_text_editing else "Edit hat text (5 win)"
+            hat_label = FONT.render(button_label, True, (255, 255, 255))
+            surface.blit(hat_label, (hat_text_rect.x + 8, hat_text_rect.y + 5))
+            hat_options = [
+                "classic",
+                "loser",
+                "war",
+                "wizard",
+                "headphones",
+                "graduation",
+                "bicycle",
+                "cardboard",
+                "powder",
+            ]
+            for index, option_id in enumerate(hat_options):
+                option_rect = pygame.Rect(
+                    HOME_COSTUME_WINDOW_RECT.x + 24,
+                    HOME_COSTUME_WINDOW_RECT.y + 160 + index * 34,
+                    250,
+                    28,
+                )
+                button_id = f"hat_{option_id}"
+                costume_buttons[button_id] = option_rect
+                is_equipped = hat_id == option_id
+                is_unlocked = option_id in unlocked_hats
+                pygame.draw.rect(
+                    surface,
+                    (75, 110, 85) if is_equipped else (70, 90, 100) if is_unlocked else (95, 86, 62),
+                    option_rect,
+                    border_radius=5,
+                )
+                pygame.draw.rect(surface, (200, 220, 240), option_rect, 1, border_radius=5)
+                hat_info = STICKMAN_HATS[option_id]
+                if is_equipped:
+                    option_label = f"{hat_info['name']} (equipped)"
+                elif is_unlocked:
+                    option_label = hat_info["name"]
+                elif hat_info["price"]:
+                    option_label = f"{hat_info['name']} ({hat_info['price']} win)"
+                else:
+                    option_label = hat_info["name"]
+                option_surface = FONT.render(option_label, True, (255, 255, 255))
+                surface.blit(option_surface, (option_rect.x + 8, option_rect.y + 5))
+            hat_text_value_surface = FONT.render(f"Current text: {hat_text_value}", True, (255, 245, 180))
+            surface.blit(hat_text_value_surface, (HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 210))
+            if hat_text_editing:
+                input_rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 236, 220, 28)
+                pygame.draw.rect(surface, (70, 90, 105), input_rect, border_radius=5)
+                pygame.draw.rect(surface, (200, 220, 245), input_rect, 1, border_radius=5)
+                input_surface = FONT.render(hat_text_input, True, (255, 255, 255))
+                surface.blit(input_surface, (input_rect.x + 8, input_rect.y + 5))
 
-    info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
-    surface.blit(info, (40, 270))
-    note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
-    surface.blit(note, (40, 310))
-    coins = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
-    surface.blit(coins, (40, 350))
+    if not costume_window_open:
+        info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
+        surface.blit(info, (40, 270))
+        note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
+        surface.blit(note, (40, 310))
+        coins = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
+        surface.blit(coins, (40, 350))
 
-    pygame.draw.rect(surface, (85, 105, 145), BACKSTORY_RECT, border_radius=7)
-    pygame.draw.rect(surface, (180, 205, 245), BACKSTORY_RECT, 2, border_radius=7)
-    backstory_text = FONT.render("VIEW BACKSTORY", True, (255, 255, 255))
-    surface.blit(
-        backstory_text,
-        (
-            BACKSTORY_RECT.x + (BACKSTORY_RECT.width - backstory_text.get_width()) // 2,
-            BACKSTORY_RECT.y + (BACKSTORY_RECT.height - backstory_text.get_height()) // 2,
-        ),
-    )
+        pygame.draw.rect(surface, (85, 105, 145), BACKSTORY_RECT, border_radius=7)
+        pygame.draw.rect(surface, (180, 205, 245), BACKSTORY_RECT, 2, border_radius=7)
+        backstory_text = FONT.render("VIEW BACKSTORY", True, (255, 255, 255))
+        surface.blit(
+            backstory_text,
+            (
+                BACKSTORY_RECT.x + (BACKSTORY_RECT.width - backstory_text.get_width()) // 2,
+                BACKSTORY_RECT.y + (BACKSTORY_RECT.height - backstory_text.get_height()) // 2,
+            ),
+        )
     return costume_buttons
 
 
@@ -2030,6 +2242,11 @@ def main():
     _, menu_win_coins = load_progress()
     menu_developer_mode_opened = load_developer_mode_state()
     menu_stickman_costumes, menu_equipped_costume = load_stickman_costumes()
+    menu_stickman_hat_text = load_stickman_hat_text()
+    menu_stickman_hat = load_stickman_hat()
+    menu_stickman_hats = load_stickman_hats()
+    menu_hat_text_editing = False
+    menu_hat_text_input = menu_stickman_hat_text
     game = None
     in_menu = True
     show_backstory = False
@@ -2043,6 +2260,12 @@ def main():
         if in_menu:
             menu_developer_mode_opened = load_developer_mode_state()
             menu_stickman_costumes, menu_equipped_costume = load_stickman_costumes()
+            menu_stickman_hat_text = load_stickman_hat_text()
+            menu_stickman_hat = load_stickman_hat()
+            menu_stickman_hats = load_stickman_hats()
+            preview_costume = menu_equipped_costume
+            if not menu_hat_text_editing:
+                menu_hat_text_input = menu_stickman_hat_text
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -2052,6 +2275,38 @@ def main():
                     if show_backstory:
                         if event.key == pygame.K_ESCAPE:
                             show_backstory = False
+                        continue
+                    if show_costume_window and menu_hat_text_editing:
+                        if event.key == pygame.K_ESCAPE:
+                            menu_hat_text_editing = False
+                            menu_hat_text_input = menu_stickman_hat_text
+                        elif event.key == pygame.K_RETURN:
+                            candidate = menu_hat_text_input.strip()[:16]
+                            if candidate:
+                                if sandbox_mode:
+                                    menu_stickman_hat_text = candidate
+                                elif menu_win_coins >= 5:
+                                    menu_win_coins -= 5
+                                    menu_stickman_hat_text = candidate
+                                    save_unlocks(
+                                        load_unlocks(),
+                                        menu_win_coins,
+                                        unlocked_maps,
+                                        highest_cleared_wave=load_highest_cleared_wave(),
+                                        stickman_costumes=menu_stickman_costumes,
+                                        equipped_stickman_costume=menu_equipped_costume,
+                                        developer_mode_opened=menu_developer_mode_opened,
+                                        stickman_hat_text=menu_stickman_hat_text,
+                                    )
+                                else:
+                                    candidate = menu_stickman_hat_text
+                            menu_hat_text_input = menu_stickman_hat_text
+                            menu_hat_text_editing = False
+                        elif event.key == pygame.K_BACKSPACE:
+                            menu_hat_text_input = menu_hat_text_input[:-1]
+                        elif event.unicode and event.unicode.isprintable():
+                            if len(menu_hat_text_input) < 16:
+                                menu_hat_text_input += event.unicode
                         continue
                     if show_costume_window and event.key == pygame.K_ESCAPE:
                         show_costume_window = False
@@ -2142,31 +2397,35 @@ def main():
                         else:
                             for costume_id, rect in menu_costume_buttons.items():
                                 if rect.collidepoint(event.pos):
-                                    preview_costume = costume_id
-                                    if costume_id in menu_stickman_costumes:
+                                    if costume_id == "hat_text":
+                                        menu_hat_text_editing = True
+                                        menu_hat_text_input = menu_stickman_hat_text
+                                        break
+                                    if costume_id.startswith("hat_"):
+                                        selected_hat = costume_id[4:]
+                                        if selected_hat not in menu_stickman_hats:
+                                            hat_price = STICKMAN_HATS[selected_hat]["price"]
+                                            if not sandbox_mode and menu_win_coins < hat_price:
+                                                break
+                                            if not sandbox_mode:
+                                                menu_win_coins -= hat_price
+                                            menu_stickman_hats.add(selected_hat)
+                                        menu_stickman_hat = selected_hat
+                                    else:
+                                        preview_costume = costume_id
                                         menu_equipped_costume = costume_id
-                                        if not sandbox_mode:
-                                            save_unlocks(
-                                                load_unlocks(),
-                                                menu_win_coins,
-                                                unlocked_maps,
-                                                stickman_costumes=menu_stickman_costumes,
-                                                equipped_stickman_costume=menu_equipped_costume,
-                                                developer_mode_opened=menu_developer_mode_opened,
-                                            )
-                                    elif menu_win_coins >= STICKMAN_COSTUMES[costume_id]["price"]:
-                                        menu_win_coins -= STICKMAN_COSTUMES[costume_id]["price"]
-                                        menu_stickman_costumes.add(costume_id)
-                                        menu_equipped_costume = costume_id
-                                        if not sandbox_mode:
-                                            save_unlocks(
-                                                load_unlocks(),
-                                                menu_win_coins,
-                                                unlocked_maps,
-                                                stickman_costumes=menu_stickman_costumes,
-                                                equipped_stickman_costume=menu_equipped_costume,
-                                                developer_mode_opened=menu_developer_mode_opened,
-                                            )
+                                    if not sandbox_mode:
+                                        save_unlocks(
+                                            load_unlocks(),
+                                            menu_win_coins,
+                                            unlocked_maps,
+                                            stickman_costumes=menu_stickman_costumes,
+                                            equipped_stickman_costume=menu_equipped_costume,
+                                            developer_mode_opened=menu_developer_mode_opened,
+                                            stickman_hat_text=menu_stickman_hat_text,
+                                            stickman_hat=menu_stickman_hat,
+                                            stickman_hats=menu_stickman_hats,
+                                        )
                                     break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
@@ -2179,34 +2438,6 @@ def main():
                             selected_map = "Spiral"
                             if not sandbox_mode:
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
-                    elif menu_developer_mode_opened:
-                        for costume_id, rect in menu_costume_buttons.items():
-                            if rect.collidepoint(event.pos):
-                                if costume_id in menu_stickman_costumes:
-                                    menu_equipped_costume = costume_id
-                                    if not sandbox_mode:
-                                        save_unlocks(
-                                            load_unlocks(),
-                                            menu_win_coins,
-                                            unlocked_maps,
-                                            stickman_costumes=menu_stickman_costumes,
-                                            equipped_stickman_costume=menu_equipped_costume,
-                                            developer_mode_opened=menu_developer_mode_opened,
-                                        )
-                                elif menu_win_coins >= STICKMAN_COSTUMES[costume_id]["price"]:
-                                    menu_win_coins -= STICKMAN_COSTUMES[costume_id]["price"]
-                                    menu_stickman_costumes.add(costume_id)
-                                    menu_equipped_costume = costume_id
-                                    if not sandbox_mode:
-                                        save_unlocks(
-                                            load_unlocks(),
-                                            menu_win_coins,
-                                            unlocked_maps,
-                                            stickman_costumes=menu_stickman_costumes,
-                                            equipped_stickman_costume=menu_equipped_costume,
-                                            developer_mode_opened=menu_developer_mode_opened,
-                                        )
-                                break
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
                         pass
@@ -2236,6 +2467,11 @@ def main():
                     menu_developer_mode_opened,
                     show_costume_window,
                     preview_costume,
+                    menu_stickman_hat_text,
+                    menu_hat_text_editing,
+                    menu_hat_text_input,
+                    menu_stickman_hat,
+                    menu_stickman_hats,
                 )
         else:
             game.update(dt)
