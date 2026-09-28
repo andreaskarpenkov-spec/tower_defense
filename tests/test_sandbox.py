@@ -188,6 +188,55 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.STICKMAN_HATS["cardboard"]["price"], 15)
         self.assertEqual(main.STICKMAN_HATS["powder"]["price"], 10)
 
+    def test_legs_prices(self):
+        self.assertEqual(main.STICKMAN_LEGS["hermes"]["price"], 10)
+        self.assertEqual(main.STICKMAN_LEGS["boots"]["price"], 5)
+
+    def test_suit_prices(self):
+        self.assertEqual(main.STICKMAN_SUITS["fish"]["price"], 70)
+        self.assertEqual(main.STICKMAN_SUITS["cactus"]["price"], 45)
+        self.assertEqual(main.STICKMAN_SUITS["jetpack"]["price"], 50)
+
+    def test_object_prices(self):
+        self.assertEqual(main.STICKMAN_OBJECTS["magic_hat"]["price"], 75)
+        self.assertEqual(main.STICKMAN_OBJECTS["sword"]["price"], 50)
+
+    def test_object_selection_is_saved_and_loaded(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 80,
+                "stickman_object": "none",
+                "stickman_objects": ["none"],
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                self.assertEqual(game.stickman_object, "none")
+                self.assertEqual(main.load_stickman_object(), "none")
+                self.assertTrue(game.buy_stickman_object("magic_hat"))
+                self.assertEqual(game.stickman_object, "magic_hat")
+                self.assertEqual(game.win_coins, 5)
+                self.assertEqual(main.load_stickman_object(), "magic_hat")
+                with open(save_path, "r", encoding="utf-8") as save_handle:
+                    saved = json.load(save_handle)
+                self.assertEqual(saved["stickman_object"], "magic_hat")
+                self.assertEqual(saved["win_coins"], 5)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_preview_renderer_supports_suit_graphics(self):
+        surface = pygame.Surface((200, 200))
+        main.draw_stickman_preview(surface, 100, 100, "classic", hat_id="classic", hat_text="sick-man", leg_id="boots", suit_id="fish")
+        self.assertEqual(surface.get_size(), (200, 200))
+
     def test_stickman_costume_button_unlocks_after_first_developer_mode(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
             json.dump({

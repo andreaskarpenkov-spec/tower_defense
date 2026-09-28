@@ -144,7 +144,23 @@ STICKMAN_HATS = {
     "graduation": {"name": "Graduation Hat", "price": 10},
     "bicycle": {"name": "Bicycle Helmet", "price": 10},
     "cardboard": {"name": "Cardboard Box", "price": 15},
-    "powder": {"name": "Powder Wig", "price": 10},
+    "powder": {"name": "Chef Hat", "price": 10},
+}
+STICKMAN_LEGS = {
+    "classic": {"name": "Bare Feet", "price": 0},
+    "hermes": {"name": "Hermes Sandals", "price": 10},
+    "boots": {"name": "Boots", "price": 5},
+}
+STICKMAN_SUITS = {
+    "classic": {"name": "Default Suit", "price": 0},
+    "fish": {"name": "Fish Suit", "price": 70},
+    "cactus": {"name": "Cactus Suit", "price": 45},
+    "jetpack": {"name": "Jetpack", "price": 50},
+}
+STICKMAN_OBJECTS = {
+    "none": {"name": "No Object", "price": 0},
+    "magic_hat": {"name": "Magic Hat", "price": 75},
+    "sword": {"name": "Sword", "price": 50},
 }
 
 
@@ -228,6 +244,84 @@ def load_stickman_hat():
     return "classic"
 
 
+def load_stickman_legs():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict) and data.get("stickman_legs") in STICKMAN_LEGS:
+                return data["stickman_legs"]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return "classic"
+
+
+def load_stickman_object():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict) and data.get("stickman_object") in STICKMAN_OBJECTS:
+                return data["stickman_object"]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return "none"
+
+
+def load_stickman_suit():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict) and data.get("stickman_suit") in STICKMAN_SUITS:
+                return data["stickman_suit"]
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return "classic"
+
+
+def load_stickman_legs_unlocked():
+    unlocked = {"classic"}
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                unlocked.update(leg_id for leg_id in data.get("stickman_legs_unlocked", []) if leg_id in STICKMAN_LEGS)
+                equipped = data.get("stickman_legs")
+                if equipped in STICKMAN_LEGS:
+                    unlocked.add(equipped)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return unlocked
+
+
+def load_stickman_suits():
+    unlocked = {"classic"}
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                unlocked.update(suit_id for suit_id in data.get("stickman_suits", []) if suit_id in STICKMAN_SUITS)
+                equipped = data.get("stickman_suit")
+                if equipped in STICKMAN_SUITS:
+                    unlocked.add(equipped)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return unlocked
+
+
+def load_stickman_objects():
+    unlocked = {"none"}
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                unlocked.update(object_id for object_id in data.get("stickman_objects", []) if object_id in STICKMAN_OBJECTS)
+                equipped = data.get("stickman_object")
+                if equipped in STICKMAN_OBJECTS:
+                    unlocked.add(equipped)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return unlocked
+
+
 def load_stickman_hats():
     unlocked = {"classic"}
     try:
@@ -243,7 +337,7 @@ def load_stickman_hats():
     return unlocked
 
 
-def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None):
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None, stickman_legs=None, stickman_legs_unlocked=None, stickman_suit=None, stickman_suits=None, stickman_object=None, stickman_objects=None):
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
@@ -264,6 +358,27 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
         if stickman_hats is None:
             stickman_hats = load_stickman_hats()
         stickman_hats = set(stickman_hats) | {"classic", stickman_hat}
+        if stickman_legs is None:
+            stickman_legs = load_stickman_legs()
+        if stickman_legs not in STICKMAN_LEGS:
+            stickman_legs = "classic"
+        if stickman_legs_unlocked is None:
+            stickman_legs_unlocked = load_stickman_legs_unlocked()
+        stickman_legs_unlocked = set(stickman_legs_unlocked) | {"classic", stickman_legs}
+        if stickman_suit is None:
+            stickman_suit = load_stickman_suit()
+        if stickman_suit not in STICKMAN_SUITS:
+            stickman_suit = "classic"
+        if stickman_suits is None:
+            stickman_suits = load_stickman_suits()
+        stickman_suits = set(stickman_suits) | {"classic", stickman_suit}
+        if stickman_object is None:
+            stickman_object = "none"
+        if stickman_object not in STICKMAN_OBJECTS:
+            stickman_object = "none"
+        if stickman_objects is None:
+            stickman_objects = load_stickman_objects()
+        stickman_objects = set(stickman_objects) | {"none", stickman_object}
         if equipped_stickman_costume not in STICKMAN_COSTUMES:
             equipped_stickman_costume = "classic"
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
@@ -278,6 +393,12 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
                     "stickman_hat_text": str(stickman_hat_text or "sick-man")[:16],
                     "stickman_hat": stickman_hat,
                     "stickman_hats": sorted(stickman_hats),
+                    "stickman_legs": stickman_legs,
+                    "stickman_legs_unlocked": sorted(stickman_legs_unlocked),
+                    "stickman_suit": stickman_suit,
+                    "stickman_suits": sorted(stickman_suits),
+                    "stickman_object": stickman_object,
+                    "stickman_objects": sorted(stickman_objects),
                     "developer_mode_opened": bool(developer_mode_opened),
                 },
                 save_file,
@@ -340,7 +461,7 @@ FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
-HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 500)
+HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
 
@@ -386,12 +507,37 @@ def clamp(value, minimum, maximum):
     return max(minimum, min(value, maximum))
 
 
-def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat_id="classic", hat_text="sick-man"):
+def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat_id="classic", hat_text="sick-man", leg_id="classic", suit_id="classic", object_id="none"):
     costume = STICKMAN_COSTUMES.get(costume_id, STICKMAN_COSTUMES["classic"])
     x = int(center_x)
     y = int(center_y)
     ink = (250, 250, 250)
     accent = costume["accent"]
+    if suit_id == "jetpack":
+        pygame.draw.rect(surface, (110, 120, 140), (x - 20, y - 44, 40, 36), border_radius=8)
+        pygame.draw.rect(surface, (255, 180, 80), (x - 12, y - 6, 8, 18), border_radius=4)
+        pygame.draw.rect(surface, (255, 180, 80), (x + 4, y - 6, 8, 18), border_radius=4)
+    elif suit_id == "cactus":
+        pygame.draw.rect(surface, (80, 180, 90), (x - 20, y - 18, 40, 50), border_radius=7)
+        for spine_x in (-12, -4, 4, 12):
+            pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 14), (x + spine_x, y + 20), 2)
+    elif suit_id == "fish":
+        pygame.draw.rect(surface, (80, 160, 220), (x - 28, y - 26, 56, 54), border_radius=12)
+        pygame.draw.polygon(surface, (140, 220, 255), [(x + 25, y - 10), (x + 42, y - 2), (x + 25, y + 10)])
+        pygame.draw.line(surface, (210, 235, 255), (x - 12, y - 8), (x + 12, y - 8), 2)
+        pygame.draw.line(surface, (210, 235, 255), (x - 12, y + 8), (x + 12, y + 8), 2)
+    if object_id == "magic_hat":
+        off_x = x + 18
+        off_y = y - 10
+        pygame.draw.circle(surface, (220, 140, 255), (off_x, off_y - 8), 10)
+        pygame.draw.polygon(surface, (255, 180, 255), [(off_x - 10, off_y - 6), (off_x + 10, off_y - 6), (off_x + 4, off_y - 22), (off_x - 4, off_y - 22)])
+        pygame.draw.line(surface, (245, 235, 255), (x + 12, y - 4), (off_x, off_y - 4), 2)
+        for spark in [(off_x - 8, off_y - 18), (off_x + 4, off_y - 20), (off_x + 10, off_y - 14)]:
+            pygame.draw.circle(surface, (255, 255, 255), spark, 2)
+    elif object_id == "sword":
+        pygame.draw.line(surface, (180, 180, 200), (x + 18, y - 26), (x + 52, y + 15), 3)
+        pygame.draw.line(surface, (255, 235, 160), (x + 32, y - 8), (x + 48, y + 10), 2)
+        pygame.draw.line(surface, (120, 120, 135), (x + 18, y - 26), (x + 18, y - 52), 3)
     pygame.draw.circle(surface, accent, (x, y - 42), 17)
     pygame.draw.circle(surface, ink, (x, y - 42), 17, 3)
     if hat_id == "loser":
@@ -441,6 +587,16 @@ def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat
     pygame.draw.line(surface, ink, (x, y - 9), (x + facing * 28, y - 24), 5)
     pygame.draw.line(surface, ink, (x, y + 25), (x - facing * 22, y + 58), 5)
     pygame.draw.line(surface, ink, (x, y + 25), (x + facing * 22, y + 58), 5)
+    if leg_id == "hermes":
+        pygame.draw.ellipse(surface, (120, 95, 70), (x - 24, y + 58, 18, 9))
+        pygame.draw.ellipse(surface, (120, 95, 70), (x + 6, y + 58, 18, 9))
+        pygame.draw.line(surface, (120, 95, 70), (x - 17, y + 58), (x - 12, y + 38), 3)
+        pygame.draw.line(surface, (120, 95, 70), (x + 17, y + 58), (x + 12, y + 38), 3)
+        pygame.draw.polygon(surface, (210, 215, 255), [(x - 22, y + 44), (x - 8, y + 38), (x - 14, y + 52)])
+        pygame.draw.polygon(surface, (210, 215, 255), [(x + 18, y + 44), (x + 4, y + 38), (x + 12, y + 52)])
+    elif leg_id == "boots":
+        pygame.draw.rect(surface, (85, 55, 45), (x - 20, y + 56, 16, 12), border_radius=2)
+        pygame.draw.rect(surface, (85, 55, 45), (x + 4, y + 56, 16, 12), border_radius=2)
     pygame.draw.circle(surface, accent, (x - 6, y - 46), 2)
     pygame.draw.circle(surface, accent, (x + 6, y - 46), 2)
 
@@ -1215,7 +1371,13 @@ class Game:
         self.stickman_costume_close_rect = pygame.Rect(548, 142, 52, 24)
         self.stickman_hat_text = load_stickman_hat_text()
         self.stickman_hat = load_stickman_hat()
+        self.stickman_legs = load_stickman_legs()
+        self.stickman_suit = load_stickman_suit()
+        self.stickman_object = load_stickman_object()
         self.unlocked_stickman_hats = load_stickman_hats()
+        self.unlocked_stickman_legs = load_stickman_legs_unlocked()
+        self.unlocked_stickman_suits = load_stickman_suits()
+        self.unlocked_stickman_objects = load_stickman_objects()
         self.unlocked_stickman_costumes, self.equipped_stickman_costume = load_stickman_costumes()
         if self.sandbox:
             self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
@@ -1224,6 +1386,7 @@ class Game:
             _, self.win_coins = load_progress()
             self.highest_cleared_wave = max(TOWER_UNLOCK_WAVES.values(), default=0)
             self.unlocked_stickman_costumes = set(STICKMAN_COSTUMES)
+            self.unlocked_stickman_legs = set(STICKMAN_LEGS)
             self.equipped_stickman_costume = self.equipped_stickman_costume if self.equipped_stickman_costume in self.unlocked_stickman_costumes else "classic"
         else:
             self.unlocked_towers, self.win_coins = load_progress()
@@ -1462,6 +1625,91 @@ class Game:
                 stickman_hat_text=self.stickman_hat_text,
                 stickman_hat=self.stickman_hat,
                 stickman_hats=self.unlocked_stickman_hats,
+                stickman_legs=self.stickman_legs,
+            )
+        return True
+
+    def buy_stickman_legs(self, leg_id):
+        if leg_id not in STICKMAN_LEGS:
+            return False
+        if leg_id not in self.unlocked_stickman_legs and not self.sandbox:
+            if self.win_coins < STICKMAN_LEGS[leg_id]["price"]:
+                return False
+            self.win_coins -= STICKMAN_LEGS[leg_id]["price"]
+        self.unlocked_stickman_legs.add(leg_id)
+        self.stickman_legs = leg_id
+        if not self.sandbox:
+            save_unlocks(
+                self.unlocked_towers,
+                self.win_coins,
+                load_unlocked_maps(),
+                highest_cleared_wave=self.highest_cleared_wave,
+                stickman_costumes=self.unlocked_stickman_costumes,
+                equipped_stickman_costume=self.equipped_stickman_costume,
+                developer_mode_opened=self.stickman_costume_menu_unlocked,
+                stickman_hat_text=self.stickman_hat_text,
+                stickman_hat=self.stickman_hat,
+                stickman_hats=self.unlocked_stickman_hats,
+                stickman_legs=self.stickman_legs,
+                stickman_legs_unlocked=self.unlocked_stickman_legs,
+            )
+        return True
+
+    def buy_stickman_suit(self, suit_id):
+        if suit_id not in STICKMAN_SUITS:
+            return False
+        if suit_id not in self.unlocked_stickman_suits and not self.sandbox:
+            if self.win_coins < STICKMAN_SUITS[suit_id]["price"]:
+                return False
+            self.win_coins -= STICKMAN_SUITS[suit_id]["price"]
+        self.unlocked_stickman_suits.add(suit_id)
+        self.stickman_suit = suit_id
+        if not self.sandbox:
+            save_unlocks(
+                self.unlocked_towers,
+                self.win_coins,
+                load_unlocked_maps(),
+                highest_cleared_wave=self.highest_cleared_wave,
+                stickman_costumes=self.unlocked_stickman_costumes,
+                equipped_stickman_costume=self.equipped_stickman_costume,
+                developer_mode_opened=self.stickman_costume_menu_unlocked,
+                stickman_hat_text=self.stickman_hat_text,
+                stickman_hat=self.stickman_hat,
+                stickman_hats=self.unlocked_stickman_hats,
+                stickman_legs=self.stickman_legs,
+                stickman_legs_unlocked=self.unlocked_stickman_legs,
+                stickman_suit=self.stickman_suit,
+                stickman_suits=self.unlocked_stickman_suits,
+            )
+        return True
+
+    def buy_stickman_object(self, object_id):
+        if object_id not in STICKMAN_OBJECTS:
+            return False
+        if object_id not in self.unlocked_stickman_objects and not self.sandbox:
+            if self.win_coins < STICKMAN_OBJECTS[object_id]["price"]:
+                return False
+            self.win_coins -= STICKMAN_OBJECTS[object_id]["price"]
+        self.unlocked_stickman_objects.add(object_id)
+        self.stickman_object = object_id
+        if not self.sandbox:
+            save_unlocks(
+                self.unlocked_towers,
+                self.win_coins,
+                load_unlocked_maps(),
+                highest_cleared_wave=self.highest_cleared_wave,
+                stickman_costumes=self.unlocked_stickman_costumes,
+                equipped_stickman_costume=self.equipped_stickman_costume,
+                developer_mode_opened=self.stickman_costume_menu_unlocked,
+                stickman_hat_text=self.stickman_hat_text,
+                stickman_hat=self.stickman_hat,
+                stickman_hats=self.unlocked_stickman_hats,
+                stickman_legs=self.stickman_legs,
+                stickman_legs_unlocked=self.unlocked_stickman_legs,
+                stickman_suit=self.stickman_suit,
+                stickman_suits=self.unlocked_stickman_suits,
+                stickman_object=self.stickman_object,
+                stickman_objects=self.unlocked_stickman_objects,
             )
         return True
 
@@ -1527,6 +1775,43 @@ class Game:
         pygame.draw.line(surface, ink, (x, y - 5), (x + facing * 13, y - 12), 3)
         pygame.draw.line(surface, ink, (x, y + 12), (x - facing * (10 + step), y + 29), 3)
         pygame.draw.line(surface, ink, (x, y + 12), (x + facing * (10 + step), y + 29), 3)
+        if self.stickman_legs == "hermes":
+            pygame.draw.ellipse(surface, (120, 95, 70), (x - 13, y + 24, 10, 5))
+            pygame.draw.ellipse(surface, (120, 95, 70), (x + 4, y + 24, 10, 5))
+            pygame.draw.line(surface, (120, 95, 70), (x - 10, y + 24), (x - 8, y + 12), 2)
+            pygame.draw.line(surface, (120, 95, 70), (x + 10, y + 24), (x + 8, y + 12), 2)
+            pygame.draw.polygon(surface, (210, 215, 255), [(x - 12, y + 16), (x - 4, y + 12), (x - 7, y + 22)])
+            pygame.draw.polygon(surface, (210, 215, 255), [(x + 9, y + 16), (x + 2, y + 12), (x + 5, y + 22)])
+        elif self.stickman_legs == "boots":
+            pygame.draw.rect(surface, (85, 55, 45), (x - 12, y + 22, 9, 9), border_radius=2)
+            pygame.draw.rect(surface, (85, 55, 45), (x + 4, y + 22, 9, 9), border_radius=2)
+        if self.stickman_suit == "jetpack":
+            pygame.draw.rect(surface, (110, 120, 140), (x - 18, y - 26, 36, 42), border_radius=8)
+            pygame.draw.rect(surface, (255, 180, 80), (x - 8, y + 12, 7, 18), border_radius=4)
+            pygame.draw.rect(surface, (255, 180, 80), (x + 1, y + 12, 7, 18), border_radius=4)
+        elif self.stickman_suit == "cactus":
+            pygame.draw.rect(surface, (80, 180, 90), (x - 16, y - 18, 32, 38), border_radius=7)
+            for spine_x in (-8, -2, 6, 12):
+                pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 12), (x + spine_x, y + 18), 2)
+        elif self.stickman_suit == "fish":
+            pygame.draw.rect(surface, (80, 160, 220), (x - 20, y - 26, 40, 50), border_radius=10)
+            pygame.draw.polygon(surface, (140, 220, 255), [(x + 16, y - 8), (x + 29, y - 2), (x + 16, y + 8)])
+            pygame.draw.line(surface, (210, 235, 255), (x - 10, y - 8), (x + 10, y - 8), 2)
+            pygame.draw.line(surface, (210, 235, 255), (x - 10, y + 8), (x + 10, y + 8), 2)
+        if self.stickman_object == "magic_hat":
+            hand_x = x + facing * 16
+            hand_y = y - 4
+            hat_x = hand_x + facing * 12
+            hat_y = hand_y - 18
+            pygame.draw.line(surface, (245, 235, 255), (x + facing * 8, y - 4), (hat_x, hat_y), 2)
+            pygame.draw.circle(surface, (220, 140, 255), (hat_x, hat_y - 8), 10)
+            pygame.draw.polygon(surface, (255, 180, 255), [(hat_x - 10, hat_y - 6), (hat_x + 10, hat_y - 6), (hat_x + 4, hat_y - 22), (hat_x - 4, hat_y - 22)])
+            for spark in [(hat_x - 8, hat_y - 18), (hat_x + 4, hat_y - 20), (hat_x + 10, hat_y - 14)]:
+                pygame.draw.circle(surface, (255, 255, 255), spark, 2)
+        elif self.stickman_object == "sword":
+            pygame.draw.line(surface, (180, 180, 200), (x + 12, y - 14), (x + 32, y + 10), 3)
+            pygame.draw.line(surface, (255, 235, 160), (x + 18, y - 6), (x + 30, y + 8), 2)
+            pygame.draw.line(surface, (120, 120, 135), (x + 12, y - 14), (x + 12, y - 36), 3)
         pygame.draw.circle(surface, accent, (x - 3, y - 24), 1)
         pygame.draw.circle(surface, accent, (x + 3, y - 24), 1)
 
@@ -2049,6 +2334,12 @@ def draw_map_selection(
     hat_text_input="sick-man",
     hat_id="classic",
     unlocked_hats=None,
+    leg_id="classic",
+    unlocked_legs=None,
+    suit_id="classic",
+    unlocked_suits=None,
+    object_id="none",
+    unlocked_objects=None,
 ):
     unlocked_hats = set(unlocked_hats or {"classic"})
     surface.fill((18, 24, 36))
@@ -2126,6 +2417,9 @@ def draw_map_selection(
                 preview_id,
                 hat_id=hat_id,
                 hat_text=hat_text_value,
+                leg_id=leg_id,
+                suit_id=suit_id,
+                object_id=object_id,
             )
             costumes_section = FONT.render("Costumes", True, (170, 200, 235))
             surface.blit(costumes_section, (HOME_COSTUME_WINDOW_RECT.x + 24, HOME_COSTUME_WINDOW_RECT.y + 42))
@@ -2195,6 +2489,51 @@ def draw_map_selection(
                 pygame.draw.rect(surface, (200, 220, 245), input_rect, 1, border_radius=5)
                 input_surface = FONT.render(hat_text_input, True, (255, 255, 255))
                 surface.blit(input_surface, (input_rect.x + 8, input_rect.y + 5))
+            legs_section = FONT.render("Legs", True, (180, 245, 200))
+            surface.blit(legs_section, (HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 240))
+            leg_options = ["classic", "hermes", "boots"]
+            for index, option_id in enumerate(leg_options):
+                leg_rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 262 + index * 34, 180, 28)
+                option_key = f"leg_{option_id}"
+                costume_buttons[option_key] = leg_rect
+                is_equipped = leg_id == option_id
+                is_unlocked = unlocked_legs is not None and option_id in unlocked_legs
+                pygame.draw.rect(surface, (75, 110, 85) if is_equipped else (70, 90, 100) if is_unlocked else (95, 86, 62), leg_rect, border_radius=5)
+                pygame.draw.rect(surface, (200, 220, 240), leg_rect, 1, border_radius=5)
+                info_name = STICKMAN_LEGS[option_id]["name"]
+                label_text = f"{info_name} (equipped)" if is_equipped else info_name if is_unlocked else f"{info_name} ({STICKMAN_LEGS[option_id]['price']} win)"
+                leg_label = FONT.render(label_text, True, (255, 255, 255))
+                surface.blit(leg_label, (leg_rect.x + 8, leg_rect.y + 5))
+            suits_section = FONT.render("Suits", True, (200, 175, 255))
+            surface.blit(suits_section, (HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 350))
+            suit_options = ["classic", "fish", "cactus", "jetpack"]
+            for index, option_id in enumerate(suit_options):
+                suit_rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 330, HOME_COSTUME_WINDOW_RECT.y + 372 + index * 34, 180, 28)
+                option_key = f"suit_{option_id}"
+                costume_buttons[option_key] = suit_rect
+                is_equipped = suit_id == option_id
+                is_unlocked = unlocked_suits is not None and option_id in unlocked_suits
+                pygame.draw.rect(surface, (75, 110, 85) if is_equipped else (70, 90, 100) if is_unlocked else (95, 86, 62), suit_rect, border_radius=5)
+                pygame.draw.rect(surface, (200, 220, 240), suit_rect, 1, border_radius=5)
+                info_name = STICKMAN_SUITS[option_id]["name"]
+                label_text = f"{info_name} (equipped)" if is_equipped else info_name if is_unlocked else f"{info_name} ({STICKMAN_SUITS[option_id]['price']} win)"
+                suit_label = FONT.render(label_text, True, (255, 255, 255))
+                surface.blit(suit_label, (suit_rect.x + 8, suit_rect.y + 5))
+            objects_section = FONT.render("Objects", True, (255, 185, 220))
+            surface.blit(objects_section, (HOME_COSTUME_WINDOW_RECT.x + 470, HOME_COSTUME_WINDOW_RECT.y + 442))
+            object_options = ["none", "magic_hat", "sword"]
+            for index, option_id in enumerate(object_options):
+                object_rect = pygame.Rect(HOME_COSTUME_WINDOW_RECT.x + 470, HOME_COSTUME_WINDOW_RECT.y + 462 + index * 24, 180, 22)
+                option_key = f"object_{option_id}"
+                costume_buttons[option_key] = object_rect
+                is_equipped = object_id == option_id
+                is_unlocked = unlocked_objects is not None and option_id in unlocked_objects
+                pygame.draw.rect(surface, (75, 110, 85) if is_equipped else (70, 90, 100) if is_unlocked else (95, 86, 62), object_rect, border_radius=5)
+                pygame.draw.rect(surface, (200, 220, 240), object_rect, 1, border_radius=5)
+                info_name = STICKMAN_OBJECTS[option_id]["name"]
+                label_text = f"{info_name} (equipped)" if is_equipped else info_name if is_unlocked else f"{info_name} ({STICKMAN_OBJECTS[option_id]['price']} win)"
+                object_label = FONT.render(label_text, True, (255, 255, 255))
+                surface.blit(object_label, (object_rect.x + 6, object_rect.y + 3))
 
     if not costume_window_open:
         info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
@@ -2245,6 +2584,12 @@ def main():
     menu_stickman_hat_text = load_stickman_hat_text()
     menu_stickman_hat = load_stickman_hat()
     menu_stickman_hats = load_stickman_hats()
+    menu_stickman_legs = load_stickman_legs_unlocked()
+    menu_stickman_leg = load_stickman_legs()
+    menu_stickman_suits = load_stickman_suits()
+    menu_stickman_suit = load_stickman_suit()
+    menu_stickman_objects = load_stickman_objects()
+    menu_stickman_object = "none"
     menu_hat_text_editing = False
     menu_hat_text_input = menu_stickman_hat_text
     game = None
@@ -2263,6 +2608,10 @@ def main():
             menu_stickman_hat_text = load_stickman_hat_text()
             menu_stickman_hat = load_stickman_hat()
             menu_stickman_hats = load_stickman_hats()
+            menu_stickman_legs = load_stickman_legs_unlocked()
+            menu_stickman_leg = load_stickman_legs()
+            menu_stickman_suit = load_stickman_suit()
+            menu_stickman_object = load_stickman_object()
             preview_costume = menu_equipped_costume
             if not menu_hat_text_editing:
                 menu_hat_text_input = menu_stickman_hat_text
@@ -2411,6 +2760,36 @@ def main():
                                                 menu_win_coins -= hat_price
                                             menu_stickman_hats.add(selected_hat)
                                         menu_stickman_hat = selected_hat
+                                    elif costume_id.startswith("leg_"):
+                                        selected_leg = costume_id[4:]
+                                        if selected_leg not in menu_stickman_legs:
+                                            leg_price = STICKMAN_LEGS[selected_leg]["price"]
+                                            if not sandbox_mode and menu_win_coins < leg_price:
+                                                break
+                                            if not sandbox_mode:
+                                                menu_win_coins -= leg_price
+                                            menu_stickman_legs.add(selected_leg)
+                                        menu_stickman_leg = selected_leg
+                                    elif costume_id.startswith("suit_"):
+                                        selected_suit = costume_id[5:]
+                                        if selected_suit not in menu_stickman_suits:
+                                            suit_price = STICKMAN_SUITS[selected_suit]["price"]
+                                            if not sandbox_mode and menu_win_coins < suit_price:
+                                                break
+                                            if not sandbox_mode:
+                                                menu_win_coins -= suit_price
+                                            menu_stickman_suits.add(selected_suit)
+                                        menu_stickman_suit = selected_suit
+                                    elif costume_id.startswith("object_"):
+                                        selected_object = costume_id[7:]
+                                        if selected_object not in menu_stickman_objects:
+                                            object_price = STICKMAN_OBJECTS[selected_object]["price"]
+                                            if not sandbox_mode and menu_win_coins < object_price:
+                                                break
+                                            if not sandbox_mode:
+                                                menu_win_coins -= object_price
+                                            menu_stickman_objects.add(selected_object)
+                                        menu_stickman_object = selected_object
                                     else:
                                         preview_costume = costume_id
                                         menu_equipped_costume = costume_id
@@ -2425,6 +2804,12 @@ def main():
                                             stickman_hat_text=menu_stickman_hat_text,
                                             stickman_hat=menu_stickman_hat,
                                             stickman_hats=menu_stickman_hats,
+                                            stickman_legs=menu_stickman_leg,
+                                            stickman_legs_unlocked=menu_stickman_legs,
+                                            stickman_suit=menu_stickman_suit,
+                                            stickman_suits=menu_stickman_suits,
+                                            stickman_object=menu_stickman_object,
+                                            stickman_objects=menu_stickman_objects,
                                         )
                                     break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
@@ -2472,6 +2857,12 @@ def main():
                     menu_hat_text_input,
                     menu_stickman_hat,
                     menu_stickman_hats,
+                    menu_stickman_leg,
+                    menu_stickman_legs,
+                    menu_stickman_suit,
+                    menu_stickman_suits,
+                    menu_stickman_object,
+                    menu_stickman_objects,
                 )
         else:
             game.update(dt)
