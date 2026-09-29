@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pygame
 
@@ -200,6 +201,53 @@ class SandboxModeTest(unittest.TestCase):
     def test_object_prices(self):
         self.assertEqual(main.STICKMAN_OBJECTS["magic_hat"]["price"], 75)
         self.assertEqual(main.STICKMAN_OBJECTS["sword"]["price"], 50)
+
+    def test_magic_hat_emits_moving_random_particles(self):
+        game = Game(MAPS["Classic"])
+        game.developer_stickman_active = True
+        game.stickman_object = "magic_hat"
+
+        game.update_developer_stickman(0.16)
+
+        self.assertTrue(game.magic_hat_particles)
+        first_particle = game.magic_hat_particles[0]
+        self.assertIn(first_particle["shape"], {"star", "coin", "cube", "orb", "house", "hut"})
+        first_position = (first_particle["x"], first_particle["y"])
+
+        game.update_developer_stickman(0.1)
+
+        self.assertNotEqual((first_particle["x"], first_particle["y"]), first_position)
+
+    def test_magic_hat_can_emit_and_draw_buildings_and_dancing_cats(self):
+        for shape in ("house", "hut", "office_building", "dancing_cat"):
+            with self.subTest(shape=shape):
+                game = Game(MAPS["Classic"])
+                game.developer_stickman_active = True
+                game.stickman_object = "magic_hat"
+                with patch("main.random.choices", return_value=[shape]):
+                    game.update_developer_stickman(0.01)
+
+                self.assertEqual(game.magic_hat_particles[0]["shape"], shape)
+                if shape == "dancing_cat":
+                    old_phase = game.magic_hat_particles[0]["dance_phase"]
+                    game.update_developer_stickman(0.01)
+                    self.assertNotEqual(game.magic_hat_particles[0]["dance_phase"], old_phase)
+                game.draw_developer_stickman(pygame.Surface((main.WIDTH, main.HEIGHT)))
+
+    def test_jetpack_suit_emits_flame_trail(self):
+        game = Game(MAPS["Classic"])
+        game.developer_stickman_active = True
+        game.stickman_suit = "jetpack"
+
+        game.update_developer_stickman(0.05)
+
+        self.assertTrue(game.jetpack_flames)
+        first_flame = game.jetpack_flames[0]
+        first_position = (first_flame["x"], first_flame["y"])
+
+        game.update_developer_stickman(0.05)
+
+        self.assertNotEqual((first_flame["x"], first_flame["y"]), first_position)
 
     def test_object_selection_is_saved_and_loaded(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

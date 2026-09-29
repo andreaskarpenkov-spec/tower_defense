@@ -507,6 +507,29 @@ def clamp(value, minimum, maximum):
     return max(minimum, min(value, maximum))
 
 
+def draw_sword(surface, hand_x, hand_y, facing=1, scale=1.0):
+    direction_x = facing * 0.62
+    direction_y = -0.78
+    perpendicular_x = -direction_y
+    perpendicular_y = direction_x
+
+    def point(distance, offset=0):
+        return (
+            round(hand_x + direction_x * distance * scale + perpendicular_x * offset * scale),
+            round(hand_y + direction_y * distance * scale + perpendicular_y * offset * scale),
+        )
+
+    blade_base = point(9)
+    blade_tip = point(52)
+    blade_points = [blade_base, point(52, 4), blade_tip, point(52, -4)]
+    pygame.draw.polygon(surface, (75, 85, 105), blade_points)
+    pygame.draw.polygon(surface, (205, 220, 235), [blade_base, point(52, 2), blade_tip, point(52, -2)])
+    pygame.draw.line(surface, (255, 255, 255), point(12, 1), point(47, 1), max(1, round(2 * scale)))
+    pygame.draw.line(surface, (135, 95, 55), point(-14), point(7), max(1, round(8 * scale)))
+    pygame.draw.line(surface, (210, 170, 100), point(9, -12), point(9, 12), max(2, round(4 * scale)))
+    pygame.draw.circle(surface, (225, 185, 110), point(-15), max(2, round(4 * scale)))
+
+
 def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat_id="classic", hat_text="sick-man", leg_id="classic", suit_id="classic", object_id="none"):
     costume = STICKMAN_COSTUMES.get(costume_id, STICKMAN_COSTUMES["classic"])
     x = int(center_x)
@@ -514,18 +537,18 @@ def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat
     ink = (250, 250, 250)
     accent = costume["accent"]
     if suit_id == "jetpack":
-        pygame.draw.rect(surface, (110, 120, 140), (x - 20, y - 44, 40, 36), border_radius=8)
-        pygame.draw.rect(surface, (255, 180, 80), (x - 12, y - 6, 8, 18), border_radius=4)
-        pygame.draw.rect(surface, (255, 180, 80), (x + 4, y - 6, 8, 18), border_radius=4)
+        pygame.draw.rect(surface, (110, 120, 140), (x - 12, y - 38, 24, 23), border_radius=5)
+        pygame.draw.rect(surface, (255, 180, 80), (x - 8, y - 6, 4, 10), border_radius=2)
+        pygame.draw.rect(surface, (255, 180, 80), (x + 4, y - 6, 4, 10), border_radius=2)
     elif suit_id == "cactus":
-        pygame.draw.rect(surface, (80, 180, 90), (x - 20, y - 18, 40, 50), border_radius=7)
-        for spine_x in (-12, -4, 4, 12):
-            pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 14), (x + spine_x, y + 20), 2)
+        pygame.draw.rect(surface, (80, 180, 90), (x - 12, y - 12, 24, 32), border_radius=5)
+        for spine_x in (-8, -3, 3, 8):
+            pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 9), (x + spine_x, y + 16), 1)
     elif suit_id == "fish":
-        pygame.draw.rect(surface, (80, 160, 220), (x - 28, y - 26, 56, 54), border_radius=12)
-        pygame.draw.polygon(surface, (140, 220, 255), [(x + 25, y - 10), (x + 42, y - 2), (x + 25, y + 10)])
-        pygame.draw.line(surface, (210, 235, 255), (x - 12, y - 8), (x + 12, y - 8), 2)
-        pygame.draw.line(surface, (210, 235, 255), (x - 12, y + 8), (x + 12, y + 8), 2)
+        pygame.draw.rect(surface, (80, 160, 220), (x - 12, y - 18, 24, 32), border_radius=7)
+        pygame.draw.polygon(surface, (140, 220, 255), [(x + 10, y - 5), (x + 19, y - 1), (x + 10, y + 4)])
+        pygame.draw.line(surface, (210, 235, 255), (x - 5, y - 5), (x + 5, y - 5), 1)
+        pygame.draw.line(surface, (210, 235, 255), (x - 5, y + 5), (x + 5, y + 5), 1)
     if object_id == "magic_hat":
         off_x = x + 18
         off_y = y - 10
@@ -535,9 +558,7 @@ def draw_stickman_preview(surface, center_x, center_y, costume_id, facing=1, hat
         for spark in [(off_x - 8, off_y - 18), (off_x + 4, off_y - 20), (off_x + 10, off_y - 14)]:
             pygame.draw.circle(surface, (255, 255, 255), spark, 2)
     elif object_id == "sword":
-        pygame.draw.line(surface, (180, 180, 200), (x + 18, y - 26), (x + 52, y + 15), 3)
-        pygame.draw.line(surface, (255, 235, 160), (x + 32, y - 8), (x + 48, y + 10), 2)
-        pygame.draw.line(surface, (120, 120, 135), (x + 18, y - 26), (x + 18, y - 52), 3)
+        draw_sword(surface, x + facing * 13, y - 12, facing)
     pygame.draw.circle(surface, accent, (x, y - 42), 17)
     pygame.draw.circle(surface, ink, (x, y - 42), 17, 3)
     if hat_id == "loser":
@@ -1364,6 +1385,10 @@ class Game:
         self.developer_stickman_vy = 95.0
         self.developer_stickman_time = 0.0
         self.developer_stickman_turn_timer = 0.0
+        self.magic_hat_particle_timer = 0.0
+        self.magic_hat_particles = []
+        self.jetpack_flame_timer = 0.0
+        self.jetpack_flames = []
         self.stickman_costume_menu_unlocked = load_developer_mode_state()
         self.stickman_costume_menu_open = False
         self.stickman_costume_button_rect = pygame.Rect(20, 90, 170, 30)
@@ -1570,6 +1595,64 @@ class Game:
         if self.developer_stickman_y < 30 or self.developer_stickman_y > HEIGHT - 24:
             self.developer_stickman_vy *= -1
             self.developer_stickman_y = clamp(self.developer_stickman_y, 30, HEIGHT - 24)
+        if self.stickman_object == "magic_hat":
+            self.magic_hat_particle_timer -= dt
+            while self.magic_hat_particle_timer <= 0:
+                facing = 1 if self.developer_stickman_vx >= 0 else -1
+                hat_x = self.developer_stickman_x + facing * 28
+                hat_y = self.developer_stickman_y - 42
+                particle_shape = random.choices(
+                    ("star", "coin", "cube", "orb", "house", "hut", "office_building", "dancing_cat"),
+                    weights=(24, 24, 20, 20, 6, 6, 4, 4),
+                )[0]
+                self.magic_hat_particles.append({
+                    "x": hat_x + random.uniform(-5, 5),
+                    "y": hat_y + random.uniform(-24, -16),
+                    "vx": random.uniform(-100, 100),
+                    "vy": random.uniform(-150, -45),
+                    "life": random.uniform(0.8, 1.4),
+                    "color": random.choice([(255, 225, 90), (100, 220, 255), (255, 120, 190), (170, 255, 130)]),
+                    "shape": particle_shape,
+                    "size": random.randint(8, 10) if particle_shape in ("house", "hut", "office_building") else random.randint(9, 11) if particle_shape == "dancing_cat" else random.randint(3, 6),
+                    "dance_phase": random.uniform(0, math.tau) if particle_shape == "dancing_cat" else 0,
+                })
+                self.magic_hat_particle_timer += 0.14
+        else:
+            self.magic_hat_particle_timer = 0.0
+        if self.stickman_suit == "jetpack":
+            self.jetpack_flame_timer -= dt
+            while self.jetpack_flame_timer <= 0:
+                speed = max(1, math.hypot(self.developer_stickman_vx, self.developer_stickman_vy))
+                direction_x = self.developer_stickman_vx / speed
+                direction_y = self.developer_stickman_vy / speed
+                for nozzle_offset in (-6, 6):
+                    flame_speed = random.uniform(55, 100)
+                    self.jetpack_flames.append({
+                        "x": self.developer_stickman_x + nozzle_offset,
+                        "y": self.developer_stickman_y + 18,
+                        "vx": -direction_x * flame_speed * 0.35 + random.uniform(-18, 18),
+                        "vy": 75 - direction_y * flame_speed * 0.2 + random.uniform(-12, 12),
+                        "life": random.uniform(0.2, 0.38),
+                        "size": random.randint(3, 6),
+                        "color": random.choice([(255, 90, 30), (255, 145, 35), (255, 205, 65)]),
+                    })
+                self.jetpack_flame_timer += 0.045
+        else:
+            self.jetpack_flame_timer = 0.0
+        for particle in self.magic_hat_particles:
+            particle["life"] -= dt
+            particle["x"] += particle["vx"] * dt
+            particle["y"] += particle["vy"] * dt
+            particle["vy"] += 180 * dt
+            if particle["shape"] == "dancing_cat":
+                particle["dance_phase"] = (particle["dance_phase"] + dt * 14) % math.tau
+        self.magic_hat_particles = [particle for particle in self.magic_hat_particles if particle["life"] > 0]
+        for flame in self.jetpack_flames:
+            flame["life"] -= dt
+            flame["x"] += flame["vx"] * dt
+            flame["y"] += flame["vy"] * dt
+            flame["vy"] += 100 * dt
+        self.jetpack_flames = [flame for flame in self.jetpack_flames if flame["life"] > 0]
 
     def tag_touched_enemies(self):
         if not self.developer_stickman_active:
@@ -1720,6 +1803,21 @@ class Game:
         y = int(self.developer_stickman_y)
         step = math.sin(self.developer_stickman_time * 10) * 7
         facing = 1 if self.developer_stickman_vx >= 0 else -1
+        for flame in self.jetpack_flames:
+            flame_x = round(flame["x"])
+            flame_y = round(flame["y"])
+            velocity_length = max(1, math.hypot(flame["vx"], flame["vy"]))
+            direction_x = flame["vx"] / velocity_length
+            direction_y = flame["vy"] / velocity_length
+            perpendicular_x = -direction_y
+            perpendicular_y = direction_x
+            size = max(1, round(flame["size"] * min(1, flame["life"] / 0.2)))
+            tip = (round(flame_x + direction_x * size * 2), round(flame_y + direction_y * size * 2))
+            base_left = (round(flame_x - perpendicular_x * size), round(flame_y - perpendicular_y * size))
+            base_right = (round(flame_x + perpendicular_x * size), round(flame_y + perpendicular_y * size))
+            pygame.draw.polygon(surface, flame["color"], [tip, base_left, base_right])
+            inner_tip = (round(flame_x + direction_x * size), round(flame_y + direction_y * size))
+            pygame.draw.polygon(surface, (255, 235, 120), [inner_tip, (flame_x, flame_y), base_right])
         costume = STICKMAN_COSTUMES.get(self.equipped_stickman_costume, STICKMAN_COSTUMES["classic"])
         ink = (250, 250, 250)
         accent = costume["accent"]
@@ -1786,18 +1884,18 @@ class Game:
             pygame.draw.rect(surface, (85, 55, 45), (x - 12, y + 22, 9, 9), border_radius=2)
             pygame.draw.rect(surface, (85, 55, 45), (x + 4, y + 22, 9, 9), border_radius=2)
         if self.stickman_suit == "jetpack":
-            pygame.draw.rect(surface, (110, 120, 140), (x - 18, y - 26, 36, 42), border_radius=8)
-            pygame.draw.rect(surface, (255, 180, 80), (x - 8, y + 12, 7, 18), border_radius=4)
-            pygame.draw.rect(surface, (255, 180, 80), (x + 1, y + 12, 7, 18), border_radius=4)
+            pygame.draw.rect(surface, (110, 120, 140), (x - 11, y - 20, 22, 27), border_radius=5)
+            pygame.draw.rect(surface, (255, 180, 80), (x - 5, y + 8, 4, 10), border_radius=2)
+            pygame.draw.rect(surface, (255, 180, 80), (x + 1, y + 8, 4, 10), border_radius=2)
         elif self.stickman_suit == "cactus":
-            pygame.draw.rect(surface, (80, 180, 90), (x - 16, y - 18, 32, 38), border_radius=7)
-            for spine_x in (-8, -2, 6, 12):
-                pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 12), (x + spine_x, y + 18), 2)
+            pygame.draw.rect(surface, (80, 180, 90), (x - 10, y - 12, 20, 25), border_radius=5)
+            for spine_x in (-6, -2, 2, 6):
+                pygame.draw.line(surface, (120, 220, 110), (x + spine_x, y - 8), (x + spine_x, y + 12), 1)
         elif self.stickman_suit == "fish":
-            pygame.draw.rect(surface, (80, 160, 220), (x - 20, y - 26, 40, 50), border_radius=10)
-            pygame.draw.polygon(surface, (140, 220, 255), [(x + 16, y - 8), (x + 29, y - 2), (x + 16, y + 8)])
-            pygame.draw.line(surface, (210, 235, 255), (x - 10, y - 8), (x + 10, y - 8), 2)
-            pygame.draw.line(surface, (210, 235, 255), (x - 10, y + 8), (x + 10, y + 8), 2)
+            pygame.draw.rect(surface, (80, 160, 220), (x - 9, y - 18, 18, 28), border_radius=6)
+            pygame.draw.polygon(surface, (140, 220, 255), [(x + 8, y - 5), (x + 16, y - 2), (x + 8, y + 4)])
+            pygame.draw.line(surface, (210, 235, 255), (x - 4, y - 5), (x + 4, y - 5), 1)
+            pygame.draw.line(surface, (210, 235, 255), (x - 4, y + 5), (x + 4, y + 5), 1)
         if self.stickman_object == "magic_hat":
             hand_x = x + facing * 16
             hand_y = y - 4
@@ -1809,11 +1907,94 @@ class Game:
             for spark in [(hat_x - 8, hat_y - 18), (hat_x + 4, hat_y - 20), (hat_x + 10, hat_y - 14)]:
                 pygame.draw.circle(surface, (255, 255, 255), spark, 2)
         elif self.stickman_object == "sword":
-            pygame.draw.line(surface, (180, 180, 200), (x + 12, y - 14), (x + 32, y + 10), 3)
-            pygame.draw.line(surface, (255, 235, 160), (x + 18, y - 6), (x + 30, y + 8), 2)
-            pygame.draw.line(surface, (120, 120, 135), (x + 12, y - 14), (x + 12, y - 36), 3)
+            draw_sword(surface, x + facing * 13, y - 12, facing, scale=0.65)
         pygame.draw.circle(surface, accent, (x - 3, y - 24), 1)
         pygame.draw.circle(surface, accent, (x + 3, y - 24), 1)
+        for particle in self.magic_hat_particles:
+            particle_x = round(particle["x"])
+            particle_y = round(particle["y"])
+            size = particle["size"]
+            shape = particle["shape"]
+            color = particle["color"]
+            if shape == "star":
+                points = [
+                    (particle_x, particle_y - size),
+                    (particle_x + size // 2, particle_y - size // 2),
+                    (particle_x + size, particle_y),
+                    (particle_x + size // 2, particle_y + size // 2),
+                    (particle_x, particle_y + size),
+                    (particle_x - size // 2, particle_y + size // 2),
+                    (particle_x - size, particle_y),
+                    (particle_x - size // 2, particle_y - size // 2),
+                ]
+                pygame.draw.polygon(surface, color, points)
+            elif shape == "coin":
+                pygame.draw.ellipse(surface, color, (particle_x - size, particle_y - size, size * 2, size * 2))
+                pygame.draw.line(surface, (255, 255, 220), (particle_x, particle_y - size // 2), (particle_x, particle_y + size // 2), 1)
+            elif shape == "cube":
+                pygame.draw.rect(surface, color, (particle_x - size, particle_y - size, size * 2, size * 2))
+            elif shape == "house":
+                pygame.draw.rect(surface, color, (particle_x - size, particle_y - size // 3, size * 2, size))
+                pygame.draw.polygon(surface, (190, 75, 65), [
+                    (particle_x - size - 2, particle_y - size // 3),
+                    (particle_x, particle_y - size - 2),
+                    (particle_x + size + 2, particle_y - size // 3),
+                ])
+                pygame.draw.rect(surface, (95, 65, 55), (particle_x - 2, particle_y + size // 4, 4, size // 2))
+            elif shape == "hut":
+                pygame.draw.rect(surface, (190, 145, 85), (particle_x - size, particle_y - size // 4, size * 2, size))
+                pygame.draw.polygon(surface, (125, 85, 45), [
+                    (particle_x - size - 3, particle_y - size // 4),
+                    (particle_x, particle_y - size),
+                    (particle_x + size + 3, particle_y - size // 4),
+                ])
+                pygame.draw.rect(surface, (90, 65, 45), (particle_x - 2, particle_y + size // 4, 4, size // 2))
+            elif shape == "office_building":
+                building_rect = pygame.Rect(particle_x - size, particle_y - size * 2, size * 2, size * 3)
+                pygame.draw.rect(surface, (105, 130, 155), building_rect, border_radius=2)
+                pygame.draw.rect(surface, (55, 70, 90), building_rect, 1, border_radius=2)
+                for window_row in range(3):
+                    for window_column in (-1, 0):
+                        window_rect = pygame.Rect(
+                            particle_x + window_column * size // 2 - 1,
+                            particle_y - size * 2 + 3 + window_row * (size - 1),
+                            max(2, size // 3),
+                            max(2, size // 3),
+                        )
+                        pygame.draw.rect(surface, (255, 225, 125), window_rect)
+                pygame.draw.line(surface, (75, 95, 120), (particle_x, particle_y - size * 2), (particle_x, particle_y - size * 2 - 3), 2)
+            elif shape == "dancing_cat":
+                phase = particle["dance_phase"]
+                bob = round(math.sin(phase) * 2)
+                head_y = particle_y - size + bob
+                radius = max(3, size // 2)
+                leg_swing = round(math.sin(phase) * size / 2)
+                pygame.draw.lines(surface, color, False, [
+                    (particle_x + size // 2, particle_y + bob),
+                    (particle_x + size, particle_y - size // 2 + bob),
+                    (particle_x + size + leg_swing, particle_y - size + bob),
+                ], max(1, size // 5))
+                pygame.draw.ellipse(surface, color, (particle_x - size // 2, particle_y - size // 2 + bob, size, size))
+                pygame.draw.line(surface, color, (particle_x - size // 3, particle_y + bob), (particle_x - size, particle_y - size // 2 + bob - leg_swing), max(1, size // 4))
+                pygame.draw.line(surface, color, (particle_x + size // 3, particle_y + bob), (particle_x + size, particle_y - size // 2 + bob + leg_swing), max(1, size // 4))
+                pygame.draw.line(surface, color, (particle_x - 2, particle_y + size // 3 + bob), (particle_x - size // 2 - leg_swing, particle_y + size + bob), max(1, size // 4))
+                pygame.draw.line(surface, color, (particle_x + 2, particle_y + size // 3 + bob), (particle_x + size // 2 + leg_swing, particle_y + size + bob), max(1, size // 4))
+                pygame.draw.circle(surface, color, (particle_x, head_y), radius)
+                pygame.draw.polygon(surface, color, [
+                    (particle_x - radius, head_y - radius // 2),
+                    (particle_x - radius, head_y - radius * 2),
+                    (particle_x - radius // 3, head_y - radius),
+                ])
+                pygame.draw.polygon(surface, color, [
+                    (particle_x + radius, head_y - radius // 2),
+                    (particle_x + radius, head_y - radius * 2),
+                    (particle_x + radius // 3, head_y - radius),
+                ])
+                pygame.draw.circle(surface, (35, 35, 45), (particle_x - 2, head_y), 1)
+                pygame.draw.circle(surface, (35, 35, 45), (particle_x + 2, head_y), 1)
+                pygame.draw.circle(surface, (245, 130, 155), (particle_x, head_y + 2), 1)
+            else:
+                pygame.draw.circle(surface, color, (particle_x, particle_y), size)
 
     def can_buy_win_tower(self, tower_type):
         tower_info = TOWER_TYPES.get(tower_type, {})
