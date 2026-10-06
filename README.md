@@ -1,6 +1,6 @@
 # Python Tower Defense
 
-A simple tower defense game built with `pygame`.
+A fun tower defense game built with `pygame`.
 
 ## Run
 
@@ -24,6 +24,7 @@ On Windows, use `py main.py` if `python3` is not available.
 - Press `R` to restart after game over.
 - unlock new towers
 - can you get the secret tower?
+  -Can you get sickman stickman to come to your screen?
 
 ## Goal
 

@@ -99,6 +99,100 @@ class SandboxModeTest(unittest.TestCase):
             if os.path.exists(save_path):
                 os.remove(save_path)
 
+    def test_achievements_are_saved_and_unlocked(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                self.assertEqual(main.load_achievements(), set())
+                game = Game(MAPS["Classic"])
+                self.assertTrue(game.unlock_achievement("first_wave"))
+                self.assertFalse(game.unlock_achievement("first_wave"))
+                self.assertTrue(game.unlock_achievement("developer_mode"))
+                self.assertFalse(game.unlock_achievement("developer_mode"))
+                self.assertIn("developer_mode", main.load_achievements())
+                with open(save_path, "r", encoding="utf-8") as save_handle:
+                    saved = json.load(save_handle)
+                self.assertIn("developer_mode", saved["achievements"])
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_saved_progress_reconciles_achievements(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({
+                "unlocked_towers": ["basic"],
+                "win_coins": 0,
+                "highest_cleared_wave": 6,
+                "unlocked_maps": ["Classic", "Spiral"],
+                "developer_mode_opened": True,
+                "stickman_suits": ["classic", "fish"],
+            }, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                earned = main.check_achievements()
+                self.assertEqual(earned, set(main.ACHIEVEMENTS))
+                self.assertEqual(main.load_achievements(), earned)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_campaign_end_rechecks_achievements_on_win_and_loss(self):
+        for outcome in ("loss", "win"):
+            with self.subTest(outcome=outcome):
+                with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+                    json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+                    save_path = save_file.name
+
+                try:
+                    original_save_file = main.SAVE_FILE
+                    main.SAVE_FILE = save_path
+                    try:
+                        game = Game(MAPS["Classic"])
+                        game.highest_cleared_wave = 6
+                        if outcome == "loss":
+                            game.lives = 0
+                        else:
+                            game.wave_index = len(WAVES)
+                        game.update(0)
+                        self.assertTrue(game.game_over)
+                        self.assertIn("wave_six", main.load_achievements())
+                    finally:
+                        main.SAVE_FILE = original_save_file
+                finally:
+                    if os.path.exists(save_path):
+                        os.remove(save_path)
+
+    def test_achievements_window_renders_and_launches_separately(self):
+        locked_surface = pygame.Surface((600, 420))
+        unlocked_surface = pygame.Surface((600, 420))
+        main.draw_achievements_window(locked_surface, set())
+        main.draw_achievements_window(unlocked_surface, {"developer_mode"})
+        self.assertEqual(unlocked_surface.get_size(), (600, 420))
+        locked_icon_colors = {tuple(locked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 132)}
+        unlocked_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 132)}
+        self.assertEqual(len(locked_icon_colors), 1)
+        self.assertGreater(len(unlocked_icon_colors), 1)
+
+        with patch("main.subprocess.Popen") as popen:
+            main.open_achievements_window()
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[-1], "--achievements")
+        self.assertEqual(command[0], main.sys.executable)
+
     def test_stickman_costumes_are_saved_and_equipable(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
             json.dump({
@@ -249,6 +343,19 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertNotEqual((first_flame["x"], first_flame["y"]), first_position)
 
+    def test_tower_placement_preview_shows_validity(self):
+        game = Game(MAPS["Classic"], sandbox=True)
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        game.selected_tower = "basic"
+        self.assertTrue(game.draw_placement_preview(surface, (80, 320)))
+        self.assertFalse(game.draw_placement_preview(surface, (280, 200)))
+
+        game.selected_tower = "mine"
+        self.assertTrue(game.draw_placement_preview(surface, (80, 200)))
+        game.money = 0
+        self.assertFalse(game.draw_placement_preview(surface, (80, 200)))
+
     def test_object_selection_is_saved_and_loaded(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
             json.dump({
@@ -339,12 +446,13 @@ class SandboxModeTest(unittest.TestCase):
             if os.path.exists(save_path):
                 os.remove(save_path)
 
-    def test_sandbox_mode_unlocks_everything_and_ignores_loss(self):
+    def test_sandbox_mode_keeps_towers_available_without_unlocking(self):
         game = Game(MAPS["Classic"], sandbox=True)
 
         self.assertTrue(game.sandbox)
         self.assertGreater(game.money, 100000)
         self.assertGreater(game.lives, 10)
+        self.assertEqual(game.unlocked_towers, {"basic"})
         for tower in [
             "basic",
             "rapid",
@@ -356,6 +464,15 @@ class SandboxModeTest(unittest.TestCase):
             "mine_tower",
         ]:
             self.assertTrue(game.is_tower_unlocked(tower), tower)
+
+        game.wave_index = 0
+        game.spawned = WAVES[0]["count"]
+        game.complete_wave_unlocks()
+        game.unlock_towers()
+
+        self.assertEqual(game.highest_cleared_wave, 0)
+        self.assertFalse(game.wave_six_cleared)
+        self.assertEqual(game.unlocked_towers, {"basic"})
 
         game.lives = 0
         game.update(0.016)

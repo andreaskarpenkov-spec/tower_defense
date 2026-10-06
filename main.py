@@ -2,6 +2,7 @@ import json
 import math
 import os
 import random
+import subprocess
 import sys
 
 import pygame
@@ -162,6 +163,29 @@ STICKMAN_OBJECTS = {
     "magic_hat": {"name": "Magic Hat", "price": 75},
     "sword": {"name": "Sword", "price": 50},
 }
+
+ACHIEVEMENTS = {
+    "developer_mode": {"name": "Sick-man", "description": "Open developer mode"},
+    "first_wave": {"name": "First Wave", "description": "Clear wave 1"},
+    "wave_six": {"name": "Wave Six", "description": "Clear wave 6"},
+    "spiral_map": {"name": "Spiral Map", "description": "Unlock the Spiral map"},
+    "first_costume": {"name": "Style Check", "description": "Buy a costume item"},
+}
+
+
+def load_achievements():
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                achievements = data.get("achievements", [])
+                if isinstance(achievements, str):
+                    achievements = [achievements]
+                if isinstance(achievements, list):
+                    return {achievement for achievement in achievements if achievement in ACHIEVEMENTS}
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return set()
 
 
 def load_progress():
@@ -337,12 +361,14 @@ def load_stickman_hats():
     return unlocked
 
 
-def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None, stickman_legs=None, stickman_legs_unlocked=None, stickman_suit=None, stickman_suits=None, stickman_object=None, stickman_objects=None):
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None, stickman_legs=None, stickman_legs_unlocked=None, stickman_suit=None, stickman_suits=None, stickman_object=None, stickman_objects=None, achievements=None):
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
         if highest_cleared_wave is None:
             highest_cleared_wave = load_highest_cleared_wave()
+        if achievements is None:
+            achievements = load_achievements()
         if stickman_costumes is None:
             stickman_costumes, _ = load_stickman_costumes()
         if equipped_stickman_costume is None:
@@ -381,6 +407,7 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
         stickman_objects = set(stickman_objects) | {"none", stickman_object}
         if equipped_stickman_costume not in STICKMAN_COSTUMES:
             equipped_stickman_costume = "classic"
+        achievements = {achievement for achievement in set(achievements) if achievement in ACHIEVEMENTS}
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
             json.dump(
                 {
@@ -400,11 +427,50 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
                     "stickman_object": stickman_object,
                     "stickman_objects": sorted(stickman_objects),
                     "developer_mode_opened": bool(developer_mode_opened),
+                    "achievements": sorted(achievements),
                 },
                 save_file,
             )
     except OSError:
         pass
+
+
+def check_achievements(game=None):
+    achievements = load_achievements()
+    highest_cleared_wave = load_highest_cleared_wave()
+    if game is not None and not game.sandbox:
+        highest_cleared_wave = max(highest_cleared_wave, game.highest_cleared_wave)
+
+    if load_developer_mode_state():
+        achievements.add("developer_mode")
+    if highest_cleared_wave >= 1:
+        achievements.add("first_wave")
+    if highest_cleared_wave >= 6:
+        achievements.add("wave_six")
+    if "Spiral" in load_unlocked_maps():
+        achievements.add("spiral_map")
+    if (
+        load_stickman_costumes()[0] - {"classic"}
+        or load_stickman_hats() - {"classic"}
+        or load_stickman_legs_unlocked() - {"classic"}
+        or load_stickman_suits() - {"classic"}
+        or load_stickman_objects() - {"none"}
+    ):
+        achievements.add("first_costume")
+
+    if game is not None:
+        game.achievements = set(achievements)
+    if achievements != load_achievements():
+        unlocked_towers, saved_win_coins = load_progress()
+        save_unlocks(
+            game.unlocked_towers if game is not None and not game.sandbox else unlocked_towers,
+            game.win_coins if game is not None and not game.sandbox else saved_win_coins,
+            load_unlocked_maps(),
+            highest_cleared_wave=highest_cleared_wave,
+            achievements=achievements,
+        )
+    return achievements
+
 
 MAPS = {
     "Classic": [
@@ -461,6 +527,7 @@ FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
+ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
@@ -917,7 +984,7 @@ class Tower:
         self.target = None
         return None
 
-    def draw(self, surface):
+    def draw(self, surface, show_range=True):
         base_x, base_y = int(self.x), int(self.y)
         pygame.draw.circle(surface, (20, 20, 20), (base_x, base_y + 3), 18)
         pygame.draw.circle(surface, (50, 50, 50), (base_x, base_y), 16)
@@ -1006,7 +1073,8 @@ class Tower:
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
             pygame.draw.line(surface, (220, 255, 255), (base_x, base_y), (barrel_end_x, barrel_end_y), 3)
 
-        pygame.draw.circle(surface, self.ring, (base_x, base_y), self.range, 1)
+        if show_range:
+            pygame.draw.circle(surface, self.ring, (base_x, base_y), self.range, 1)
 
 
 class Projectile:
@@ -1389,6 +1457,7 @@ class Game:
         self.magic_hat_particles = []
         self.jetpack_flame_timer = 0.0
         self.jetpack_flames = []
+        self.achievements = load_achievements()
         self.stickman_costume_menu_unlocked = load_developer_mode_state()
         self.stickman_costume_menu_open = False
         self.stickman_costume_button_rect = pygame.Rect(20, 90, 170, 30)
@@ -1405,11 +1474,11 @@ class Game:
         self.unlocked_stickman_objects = load_stickman_objects()
         self.unlocked_stickman_costumes, self.equipped_stickman_costume = load_stickman_costumes()
         if self.sandbox:
-            self.unlocked_towers = set(TOWER_TYPES) | {"mine", "walker"}
+            self.unlocked_towers = {"basic"}
             self.money = 1_000_000
             self.lives = 1000
             _, self.win_coins = load_progress()
-            self.highest_cleared_wave = max(TOWER_UNLOCK_WAVES.values(), default=0)
+            self.highest_cleared_wave = 0
             self.unlocked_stickman_costumes = set(STICKMAN_COSTUMES)
             self.unlocked_stickman_legs = set(STICKMAN_LEGS)
             self.equipped_stickman_costume = self.equipped_stickman_costume if self.equipped_stickman_costume in self.unlocked_stickman_costumes else "classic"
@@ -1423,7 +1492,7 @@ class Game:
             if self.equipped_stickman_costume not in self.unlocked_stickman_costumes:
                 self.equipped_stickman_costume = "classic"
         if self.sandbox:
-            self.wave_six_cleared = True
+            self.wave_six_cleared = False
         self.victory_coins_awarded = False
         self._apply_unlocks_from_progress()
 
@@ -1434,6 +1503,8 @@ class Game:
         return "Classic"
 
     def _apply_unlocks_from_progress(self):
+        if self.sandbox:
+            return
         for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
             if tower_type != "basic" and self.highest_cleared_wave >= wave_required:
                 self.unlocked_towers.add(tower_type)
@@ -1453,7 +1524,7 @@ class Game:
         self._apply_unlocks_from_progress()
 
     def complete_wave_unlocks(self):
-        if self.game_over:
+        if self.game_over or self.sandbox:
             return
         if self.wave_index >= len(WAVES):
             return
@@ -1463,8 +1534,11 @@ class Game:
         if not all(enemy.is_dead() or enemy.reached_goal() for enemy in self.enemies):
             return
         self.highest_cleared_wave = max(self.highest_cleared_wave, self.wave_index + 1)
+        if self.wave_index + 1 >= 1:
+            self.unlock_achievement("first_wave")
         if self.wave_index + 1 >= 6:
             self.wave_six_cleared = True
+            self.unlock_achievement("wave_six")
         self._apply_unlocks_from_progress()
 
     def unlock_mine_tower_if_ready(self):
@@ -1493,6 +1567,33 @@ class Game:
         for tower in self.towers:
             tower.shooter_immunity = True
 
+    def unlock_achievement(self, achievement_id):
+        if achievement_id not in ACHIEVEMENTS:
+            return False
+        if achievement_id in self.achievements:
+            return False
+        self.achievements.add(achievement_id)
+        save_unlocks(
+            self.unlocked_towers,
+            self.win_coins,
+            load_unlocked_maps(),
+            highest_cleared_wave=self.highest_cleared_wave,
+            stickman_costumes=self.unlocked_stickman_costumes,
+            equipped_stickman_costume=self.equipped_stickman_costume,
+            developer_mode_opened=self.stickman_costume_menu_unlocked,
+            stickman_hat_text=self.stickman_hat_text,
+            stickman_hat=self.stickman_hat,
+            stickman_hats=self.unlocked_stickman_hats,
+            stickman_legs=self.stickman_legs,
+            stickman_legs_unlocked=self.unlocked_stickman_legs,
+            stickman_suit=self.stickman_suit,
+            stickman_suits=self.unlocked_stickman_suits,
+            stickman_object=self.stickman_object,
+            stickman_objects=self.unlocked_stickman_objects,
+            achievements=self.achievements,
+        )
+        return True
+
     def register_key(self, key):
         if self.developer_mode:
             return
@@ -1509,6 +1610,7 @@ class Game:
             self.developer_mode = True
             self.developer_stickman_active = True
             self.stickman_costume_menu_unlocked = True
+            self.unlock_achievement("developer_mode")
             save_unlocks(
                 self.unlocked_towers,
                 self.win_coins,
@@ -1517,6 +1619,7 @@ class Game:
                 stickman_costumes=self.unlocked_stickman_costumes,
                 equipped_stickman_costume=self.equipped_stickman_costume,
                 developer_mode_opened=True,
+                achievements=self.achievements,
             )
             self.developer_buffer = ""
 
@@ -2170,6 +2273,8 @@ class Game:
 
         if not self.sandbox:
             save_unlocks(self.unlocked_towers, self.win_coins, highest_cleared_wave=self.highest_cleared_wave)
+        if self.game_over:
+            check_achievements(self)
 
     def place_tower(self, mouse_pos):
         grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
@@ -2356,6 +2461,46 @@ class Game:
                 pygame.draw.circle(surface, (190, 210, 110), (plant_x, plant_y - stem_len - 3), flower_size)
                 pygame.draw.circle(surface, (120, 170, 90), (plant_x, plant_y - stem_len - 3), max(2, flower_size // 2))
 
+    def draw_placement_preview(self, surface, mouse_pos):
+        if self.game_over:
+            return False
+
+        grid_x = clamp(round(mouse_pos[0] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, WIDTH - GRID_SIZE // 2)
+        grid_y = clamp(round(mouse_pos[1] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, HEIGHT - GRID_SIZE // 2)
+        selected = self.selected_tower
+        if selected == "mine":
+            valid = self.is_tower_unlocked(selected) and self.money >= MINE_COST and self.can_place_mine(grid_x, grid_y)
+        elif selected == "walker":
+            valid = self.is_tower_unlocked(selected) and self.money >= WALKER_COST and self.can_place_mine(grid_x, grid_y)
+        elif selected == "gunner":
+            valid = self.is_tower_unlocked(selected) and self.money >= TOWER_TYPES[selected]["cost"] and self.can_place_mine(grid_x, grid_y)
+        elif selected in TOWER_TYPES and TOWER_TYPES[selected].get("win_cost"):
+            valid = self.can_buy_win_tower(selected) and grid_x <= WIDTH - 140 and self.can_place(grid_x, grid_y)
+        elif selected in TOWER_TYPES:
+            valid = (
+                self.is_tower_unlocked(selected)
+                and self.money >= TOWER_TYPES[selected]["cost"]
+                and grid_x <= WIDTH - 140
+                and self.can_place(grid_x, grid_y)
+            )
+        else:
+            return False
+
+        preview = pygame.Surface((64, 64), pygame.SRCALPHA)
+        preview_center = (32, 32)
+        if selected == "mine":
+            Mine(*preview_center).draw(preview)
+        elif selected == "walker":
+            Walker(*preview_center, self.path_points).draw(preview)
+        else:
+            Tower(*preview_center, selected).draw(preview, show_range=False)
+        preview.set_alpha(135 if valid else 170)
+        surface.blit(preview, (grid_x - 32, grid_y - 32))
+
+        outline_color = (100, 245, 165) if valid else (255, 90, 90)
+        pygame.draw.rect(surface, outline_color, (grid_x - 20, grid_y - 20, GRID_SIZE, GRID_SIZE), 2)
+        return valid
+
     def handle_developer_spawn_click(self, mouse_pos):
         if not self.developer_mode:
             return False
@@ -2397,6 +2542,7 @@ class Game:
             self.draw_grass_texture(surface)
 
         self.draw_developer_stickman(surface)
+        self.draw_placement_preview(surface, pygame.mouse.get_pos())
 
         tower_info = TOWER_TYPES.get(self.selected_tower)
         if self.selected_tower == "mine":
@@ -2499,6 +2645,97 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
+def draw_achievement_icon(surface, achievement_id, center):
+    center_x, center_y = center
+    if achievement_id == "developer_mode":
+        pygame.draw.rect(surface, (45, 55, 65), (center_x - 10, center_y - 13, 20, 5))
+        pygame.draw.rect(surface, (210, 75, 65), (center_x - 7, center_y - 19, 14, 7))
+        pygame.draw.circle(surface, (245, 205, 155), (center_x, center_y - 3), 6)
+        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 3), (center_x, center_y + 13), 3)
+        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x - 8, center_y + 11), 3)
+        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x + 8, center_y + 11), 3)
+    elif achievement_id == "first_wave":
+        pygame.draw.line(surface, (225, 225, 220), (center_x - 8, center_y - 14), (center_x - 8, center_y + 14), 3)
+        pygame.draw.polygon(surface, (80, 205, 125), [(center_x - 6, center_y - 13), (center_x + 11, center_y - 8), (center_x - 6, center_y - 2)])
+        pygame.draw.circle(surface, (255, 220, 90), (center_x + 1, center_y - 8), 2)
+    elif achievement_id == "wave_six":
+        pygame.draw.polygon(surface, (90, 165, 240), [(center_x - 10, center_y - 12), (center_x - 3, center_y - 8), (center_x - 6, center_y + 3), (center_x - 11, center_y - 2)])
+        pygame.draw.polygon(surface, (90, 165, 240), [(center_x + 10, center_y - 12), (center_x + 3, center_y - 8), (center_x + 6, center_y + 3), (center_x + 11, center_y - 2)])
+        pygame.draw.circle(surface, (255, 205, 70), center, 10)
+        pygame.draw.circle(surface, (255, 240, 170), center, 7, 2)
+        number = FONT.render("6", True, (90, 65, 30))
+        surface.blit(number, (center_x - number.get_width() // 2, center_y - number.get_height() // 2))
+    elif achievement_id == "spiral_map":
+        points = []
+        for step in range(48):
+            angle = step * math.tau / 24
+            radius = 1 + step * 0.25
+            points.append((round(center_x + math.cos(angle) * radius), round(center_y + math.sin(angle) * radius)))
+        pygame.draw.lines(surface, (100, 225, 145), False, points, 3)
+        pygame.draw.circle(surface, (245, 220, 115), points[-1], 3)
+    elif achievement_id == "first_costume":
+        pygame.draw.polygon(surface, (110, 190, 245), [(center_x - 8, center_y - 8), (center_x - 14, center_y - 2), (center_x - 10, center_y + 3), (center_x - 7, center_y + 1), (center_x - 7, center_y + 13), (center_x + 7, center_y + 13), (center_x + 7, center_y + 1), (center_x + 10, center_y + 3), (center_x + 14, center_y - 2), (center_x + 8, center_y - 8)])
+        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y - 3), 2)
+        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4), 2)
+
+
+def draw_achievements_window(surface, achievements):
+    surface.fill((18, 24, 36))
+    title = FONT.render("Achievements", True, (255, 225, 145))
+    surface.blit(title, (32, 24))
+    unlocked_count = len(achievements & ACHIEVEMENTS.keys())
+    progress = FONT.render(f"Unlocked: {unlocked_count}/{len(ACHIEVEMENTS)}", True, (190, 210, 225))
+    surface.blit(progress, (32, 58))
+    for index, (achievement_id, info) in enumerate(ACHIEVEMENTS.items()):
+        unlocked = achievement_id in achievements
+        rect = pygame.Rect(32, 92 + index * 56, 536, 46)
+        pygame.draw.rect(surface, (57, 105, 77) if unlocked else (48, 58, 72), rect, border_radius=5)
+        pygame.draw.rect(surface, (145, 185, 160) if unlocked else (105, 120, 140), rect, 1, border_radius=5)
+        name = FONT.render(info["name"], True, (255, 255, 255))
+        description = FONT.render(info["description"], True, (205, 215, 225))
+        if unlocked:
+            draw_achievement_icon(surface, achievement_id, (rect.x + 26, rect.centery))
+        surface.blit(name, (rect.x + 58, rect.y + 4))
+        surface.blit(description, (rect.x + 58, rect.y + 24))
+        status = FONT.render("Unlocked" if unlocked else "Locked", True, (185, 245, 195) if unlocked else (165, 175, 190))
+        surface.blit(status, (rect.right - status.get_width() - 12, rect.y + 14))
+
+
+def run_achievements_window():
+    surface = pygame.display.set_mode((600, 420))
+    pygame.display.set_caption("Achievements")
+    clock = pygame.time.Clock()
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+        draw_achievements_window(surface, load_achievements())
+        pygame.display.flip()
+        clock.tick(FPS)
+    pygame.quit()
+
+
+def open_achievements_window():
+    return subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--achievements"],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+    )
+
+
+def draw_achievements_button(surface):
+    pygame.draw.rect(surface, (85, 105, 145), ACHIEVEMENTS_BUTTON_RECT, border_radius=7)
+    pygame.draw.rect(surface, (180, 205, 245), ACHIEVEMENTS_BUTTON_RECT, 2, border_radius=7)
+    label = FONT.render("Achievements", True, (255, 255, 255))
+    surface.blit(
+        label,
+        (
+            ACHIEVEMENTS_BUTTON_RECT.centerx - label.get_width() // 2,
+            ACHIEVEMENTS_BUTTON_RECT.centery - label.get_height() // 2,
+        ),
+    )
+
+
 def draw_map_selection(
     surface,
     selected_map,
@@ -2521,6 +2758,7 @@ def draw_map_selection(
     unlocked_suits=None,
     object_id="none",
     unlocked_objects=None,
+    achievements=None,
 ):
     unlocked_hats = set(unlocked_hats or {"classic"})
     surface.fill((18, 24, 36))
@@ -2734,6 +2972,7 @@ def draw_map_selection(
                 BACKSTORY_RECT.y + (BACKSTORY_RECT.height - backstory_text.get_height()) // 2,
             ),
         )
+        draw_achievements_button(surface)
     return costume_buttons
 
 
@@ -2756,6 +2995,7 @@ def draw_backstory(surface):
 
 
 def main():
+    check_achievements()
     selected_map = DEFAULT_MAP
     sandbox_mode = False
     unlocked_maps = load_unlocked_maps()
@@ -2780,6 +3020,7 @@ def main():
     preview_costume = menu_equipped_costume
     running = True
     menu_costume_buttons = {}
+    achievements_process = None
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
@@ -2941,6 +3182,28 @@ def main():
                                                 menu_win_coins -= hat_price
                                             menu_stickman_hats.add(selected_hat)
                                         menu_stickman_hat = selected_hat
+                                        if selected_hat != "classic":
+                                            achievements = load_achievements()
+                                            achievements.add("first_costume")
+                                            if not sandbox_mode:
+                                                save_unlocks(
+                                                    load_unlocks(),
+                                                    menu_win_coins,
+                                                    unlocked_maps,
+                                                    stickman_costumes=menu_stickman_costumes,
+                                                    equipped_stickman_costume=menu_equipped_costume,
+                                                    developer_mode_opened=menu_developer_mode_opened,
+                                                    stickman_hat_text=menu_stickman_hat_text,
+                                                    stickman_hat=menu_stickman_hat,
+                                                    stickman_hats=menu_stickman_hats,
+                                                    stickman_legs=menu_stickman_leg,
+                                                    stickman_legs_unlocked=menu_stickman_legs,
+                                                    stickman_suit=menu_stickman_suit,
+                                                    stickman_suits=menu_stickman_suits,
+                                                    stickman_object=menu_stickman_object,
+                                                    stickman_objects=menu_stickman_objects,
+                                                    achievements=achievements,
+                                                )
                                     elif costume_id.startswith("leg_"):
                                         selected_leg = costume_id[4:]
                                         if selected_leg not in menu_stickman_legs:
@@ -2951,6 +3214,28 @@ def main():
                                                 menu_win_coins -= leg_price
                                             menu_stickman_legs.add(selected_leg)
                                         menu_stickman_leg = selected_leg
+                                        if selected_leg != "classic":
+                                            achievements = load_achievements()
+                                            achievements.add("first_costume")
+                                            if not sandbox_mode:
+                                                save_unlocks(
+                                                    load_unlocks(),
+                                                    menu_win_coins,
+                                                    unlocked_maps,
+                                                    stickman_costumes=menu_stickman_costumes,
+                                                    equipped_stickman_costume=menu_equipped_costume,
+                                                    developer_mode_opened=menu_developer_mode_opened,
+                                                    stickman_hat_text=menu_stickman_hat_text,
+                                                    stickman_hat=menu_stickman_hat,
+                                                    stickman_hats=menu_stickman_hats,
+                                                    stickman_legs=menu_stickman_leg,
+                                                    stickman_legs_unlocked=menu_stickman_legs,
+                                                    stickman_suit=menu_stickman_suit,
+                                                    stickman_suits=menu_stickman_suits,
+                                                    stickman_object=menu_stickman_object,
+                                                    stickman_objects=menu_stickman_objects,
+                                                    achievements=achievements,
+                                                )
                                     elif costume_id.startswith("suit_"):
                                         selected_suit = costume_id[5:]
                                         if selected_suit not in menu_stickman_suits:
@@ -2961,6 +3246,28 @@ def main():
                                                 menu_win_coins -= suit_price
                                             menu_stickman_suits.add(selected_suit)
                                         menu_stickman_suit = selected_suit
+                                        if selected_suit != "classic":
+                                            achievements = load_achievements()
+                                            achievements.add("first_costume")
+                                            if not sandbox_mode:
+                                                save_unlocks(
+                                                    load_unlocks(),
+                                                    menu_win_coins,
+                                                    unlocked_maps,
+                                                    stickman_costumes=menu_stickman_costumes,
+                                                    equipped_stickman_costume=menu_equipped_costume,
+                                                    developer_mode_opened=menu_developer_mode_opened,
+                                                    stickman_hat_text=menu_stickman_hat_text,
+                                                    stickman_hat=menu_stickman_hat,
+                                                    stickman_hats=menu_stickman_hats,
+                                                    stickman_legs=menu_stickman_leg,
+                                                    stickman_legs_unlocked=menu_stickman_legs,
+                                                    stickman_suit=menu_stickman_suit,
+                                                    stickman_suits=menu_stickman_suits,
+                                                    stickman_object=menu_stickman_object,
+                                                    stickman_objects=menu_stickman_objects,
+                                                    achievements=achievements,
+                                                )
                                     elif costume_id.startswith("object_"):
                                         selected_object = costume_id[7:]
                                         if selected_object not in menu_stickman_objects:
@@ -2971,6 +3278,28 @@ def main():
                                                 menu_win_coins -= object_price
                                             menu_stickman_objects.add(selected_object)
                                         menu_stickman_object = selected_object
+                                        if selected_object != "none":
+                                            achievements = load_achievements()
+                                            achievements.add("first_costume")
+                                            if not sandbox_mode:
+                                                save_unlocks(
+                                                    load_unlocks(),
+                                                    menu_win_coins,
+                                                    unlocked_maps,
+                                                    stickman_costumes=menu_stickman_costumes,
+                                                    equipped_stickman_costume=menu_equipped_costume,
+                                                    developer_mode_opened=menu_developer_mode_opened,
+                                                    stickman_hat_text=menu_stickman_hat_text,
+                                                    stickman_hat=menu_stickman_hat,
+                                                    stickman_hats=menu_stickman_hats,
+                                                    stickman_legs=menu_stickman_leg,
+                                                    stickman_legs_unlocked=menu_stickman_legs,
+                                                    stickman_suit=menu_stickman_suit,
+                                                    stickman_suits=menu_stickman_suits,
+                                                    stickman_object=menu_stickman_object,
+                                                    stickman_objects=menu_stickman_objects,
+                                                    achievements=achievements,
+                                                )
                                     else:
                                         preview_costume = costume_id
                                         menu_equipped_costume = costume_id
@@ -2995,6 +3324,9 @@ def main():
                                     break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
+                    elif ACHIEVEMENTS_BUTTON_RECT.collidepoint(event.pos):
+                        if achievements_process is None or achievements_process.poll() is not None:
+                            achievements_process = open_achievements_window()
                     elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
                         show_costume_window = True
                     elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
@@ -3003,7 +3335,9 @@ def main():
                             unlocked_maps.add("Spiral")
                             selected_map = "Spiral"
                             if not sandbox_mode:
-                                save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps)
+                                achievements = load_achievements()
+                                achievements.add("spiral_map")
+                                save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps, achievements=achievements)
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
                         pass
@@ -3044,6 +3378,7 @@ def main():
                     menu_stickman_suits,
                     menu_stickman_object,
                     menu_stickman_objects,
+                    load_achievements(),
                 )
         else:
             game.update(dt)
@@ -3056,4 +3391,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--achievements" in sys.argv:
+        run_achievements_window()
+    else:
+        main()
