@@ -72,8 +72,39 @@ class SandboxModeTest(unittest.TestCase):
         self.assertNotEqual(loop.background_color, spiral.background_color)
         self.assertEqual(classic.map_name, "Classic")
 
-    def test_game_has_six_waves(self):
-        self.assertEqual(len(WAVES), 6)
+    def test_game_has_seven_waves(self):
+        self.assertEqual(len(WAVES), 7)
+
+    def test_lightning_enemy_first_appears_in_wave_six_at_three_times_speed(self):
+        game = Game(MAPS["Classic"])
+        game.wave_index = 5
+        game.spawned = 0
+
+        game.spawn_enemy()
+
+        self.assertEqual(len(game.enemies), 1)
+        self.assertEqual(game.enemies[0].type, "lightning")
+        self.assertAlmostEqual(game.enemies[0].base_speed, WAVES[5]["speed"] * 3.0)
+
+    def test_bestiary_lists_all_enemy_types(self):
+        self.assertIn("ground", main.BESTIARY)
+        self.assertIn("flyer", main.BESTIARY)
+        self.assertIn("shooter", main.BESTIARY)
+        self.assertIn("lightning", main.BESTIARY)
+        self.assertIn("wave 6", main.BESTIARY["lightning"]["notes"].lower())
+
+    def test_ghost_enemy_appears_in_wave_seven_and_turns_invisible(self):
+        game = Game(MAPS["Classic"])
+        game.wave_index = 6
+        game.spawned = 0
+
+        game.spawn_enemy()
+
+        self.assertEqual(len(game.enemies), 1)
+        self.assertEqual(game.enemies[0].type, "ghost")
+        self.assertTrue(game.enemies[0].is_visible())
+        game.enemies[0].ghost_visible = False
+        self.assertFalse(game.enemies[0].is_visible())
 
     def test_map_unlock_costs_20_win_coins_and_persists(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

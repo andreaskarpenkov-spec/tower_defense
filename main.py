@@ -177,6 +177,13 @@ ACHIEVEMENTS = {
     "matrix_dodge": {"name": "Matrix Dodge", "description": "Make a flyer evade a tower"},
     "exit_construct": {"name": "Exit the Construct", "description": "Win the campaign"},
 }
+BESTIARY = {
+    "ground": {"name": "Ground", "speed": "standard", "notes": "The basic enemy that marches down the path."},
+    "flyer": {"name": "Flyer", "speed": "fast and evasive", "notes": "A winged enemy that dodges towers and appears in later waves."},
+    "shooter": {"name": "Shooter", "speed": "mid-speed with ranged fire", "notes": "This enemy launches projectiles at nearby towers."},
+    "lightning": {"name": "Lightning", "speed": "3x regular speed", "notes": "A blinding fast enemy that first appears in wave 6."},
+    "ghost": {"name": "Ghost", "speed": "standard", "notes": "A wave 7 spirit that flashes visible for 10 sec then invisible for 5 sec."},
+}
 ACHIEVEMENT_POPUP_SECONDS = 5.0
 ACHIEVEMENT_POPUPS = []
 
@@ -395,7 +402,26 @@ def load_stickman_hats():
     return unlocked
 
 
-def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None, stickman_legs=None, stickman_legs_unlocked=None, stickman_suit=None, stickman_suits=None, stickman_object=None, stickman_objects=None, achievements=None):
+def load_enemy_kills():
+    default_kills = {enemy_id: 0 for enemy_id in BESTIARY}
+    try:
+        with open(SAVE_FILE, "r", encoding="utf-8") as save_file:
+            data = json.load(save_file)
+            if isinstance(data, dict):
+                enemy_kills = data.get("enemy_kills", {})
+                if isinstance(enemy_kills, dict):
+                    for enemy_id in BESTIARY:
+                        value = enemy_kills.get(enemy_id, 0)
+                        try:
+                            default_kills[enemy_id] = max(0, int(value))
+                        except (TypeError, ValueError):
+                            default_kills[enemy_id] = 0
+    except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
+        pass
+    return default_kills
+
+
+def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_cleared_wave=None, stickman_costumes=None, equipped_stickman_costume=None, developer_mode_opened=None, stickman_hat_text=None, stickman_hat=None, stickman_hats=None, stickman_legs=None, stickman_legs_unlocked=None, stickman_suit=None, stickman_suits=None, stickman_object=None, stickman_objects=None, achievements=None, enemy_kills=None):
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
@@ -442,6 +468,11 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
         if equipped_stickman_costume not in STICKMAN_COSTUMES:
             equipped_stickman_costume = "classic"
         achievements = {achievement for achievement in set(achievements) if achievement in ACHIEVEMENTS}
+        if enemy_kills is None:
+            enemy_kills = load_enemy_kills()
+        enemy_kills = {enemy_id: max(0, int(value)) for enemy_id, value in dict(enemy_kills).items() if enemy_id in BESTIARY}
+        for enemy_id in BESTIARY:
+            enemy_kills.setdefault(enemy_id, 0)
         with open(SAVE_FILE, "w", encoding="utf-8") as save_file:
             json.dump(
                 {
@@ -462,6 +493,7 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
                     "stickman_objects": sorted(stickman_objects),
                     "developer_mode_opened": bool(developer_mode_opened),
                     "achievements": sorted(achievements),
+                    "enemy_kills": {enemy_id: enemy_kills.get(enemy_id, 0) for enemy_id in BESTIARY},
                 },
                 save_file,
             )
@@ -574,6 +606,7 @@ SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
+BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
@@ -609,6 +642,7 @@ WAVES = [
     {"count": 12, "speed": 7.2, "hp": 390, "reward": 34},
     {"count": 15, "speed": 8.5, "hp": 520, "reward": 42},
     {"count": 18, "speed": 9.5, "hp": 650, "reward": 50},
+    {"count": 22, "speed": 10.5, "hp": 780, "reward": 60},
 ]
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -755,10 +789,22 @@ class Enemy:
         self.slow_amount = 1.0
         self.loser_hat = False
         self.dodged_tower = False
+        self.ghost_visible = True
+        self.ghost_phase_timer = 10.0
+
+    def is_visible(self):
+        if self.type != "ghost":
+            return True
+        return self.ghost_visible
 
     def update(self, dt, towers):
         if self.finished:
             return
+        if self.type == "ghost":
+            self.ghost_phase_timer -= dt
+            if self.ghost_phase_timer <= 0:
+                self.ghost_visible = not self.ghost_visible
+                self.ghost_phase_timer = 10.0 if self.ghost_visible else 5.0
         if self.slow_timer > 0:
             self.slow_timer -= dt
             if self.slow_timer <= 0:
@@ -867,6 +913,22 @@ class Enemy:
             pygame.draw.circle(surface, body_color, (center_x, center_y), 12)
             pygame.draw.line(surface, (70, 35, 25), (center_x + 8, center_y + 5), (center_x + 22, center_y + 1), 5)
             eye_color = (255, 220, 100)
+        elif self.type == "lightning":
+            pygame.draw.polygon(
+                surface,
+                (220, 220, 80),
+                [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22),
+                 (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10),
+                 (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)],
+            )
+            pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
+            eye_color = (255, 255, 255)
+        elif self.type == "ghost":
+            if not self.is_visible():
+                return
+            pygame.draw.circle(surface, (215, 230, 255), (center_x, center_y), 12)
+            pygame.draw.circle(surface, (130, 150, 200), (center_x, center_y), 7)
+            eye_color = (240, 255, 255)
         else:
             pygame.draw.polygon(
                 surface,
@@ -1010,6 +1072,8 @@ class Tower:
         best_dist = float("inf")
         for enemy in enemies:
             if enemy.is_dead() or enemy.reached_goal():
+                continue
+            if enemy.type == "ghost" and not enemy.is_visible():
                 continue
             dx = enemy.x - self.x
             dy = enemy.y - self.y
@@ -1506,6 +1570,7 @@ class Game:
         self.jetpack_flame_timer = 0.0
         self.jetpack_flames = []
         self.achievements = load_achievements()
+        self.enemy_kills = load_enemy_kills()
         self.stickman_costume_menu_unlocked = load_developer_mode_state()
         self.stickman_costume_menu_open = False
         self.stickman_costume_button_rect = pygame.Rect(20, 90, 170, 30)
@@ -1686,7 +1751,7 @@ class Game:
             enemy.y = clamp(enemy.y + dy, 0, HEIGHT)
 
     def set_developer_spawn_type(self, enemy_type):
-        if enemy_type in {"ground", "flyer", "shooter"}:
+        if enemy_type in {"ground", "flyer", "shooter", "lightning", "ghost"}:
             self.developer_spawn_type = enemy_type
 
     def developer_spawn_enemy(self):
@@ -1697,8 +1762,12 @@ class Game:
             enemy = Enemy(self.path_points, speed=5.0, hp=180, reward=18, enemy_type="ground")
         elif enemy_type == "flyer":
             enemy = Enemy(self.path_points, speed=6.0, hp=160, reward=26, enemy_type="flyer")
-        else:
+        elif enemy_type == "shooter":
             enemy = Enemy(self.path_points, speed=4.5, hp=220, reward=28, enemy_type="shooter")
+        elif enemy_type == "lightning":
+            enemy = Enemy(self.path_points, speed=18.0, hp=220, reward=35, enemy_type="lightning")
+        else:
+            enemy = Enemy(self.path_points, speed=5.0, hp=210, reward=36, enemy_type="ghost")
         self.enemies.append(enemy)
 
     def begin_enemy_drag(self, mouse_pos):
@@ -2201,13 +2270,21 @@ class Game:
     def spawn_enemy(self):
         wave = WAVES[self.wave_index]
         enemy_type = "ground"
-        if self.wave_index >= 1 and (self.spawned + 1) % 6 == 0:
+        if self.wave_index >= 6 and (self.spawned == 0 or (self.spawned + 1) % 5 == 0):
+            enemy_type = "ghost"
+        elif self.wave_index >= 5 and (self.spawned == 0 or (self.spawned + 1) % 4 == 0):
+            enemy_type = "lightning"
+        elif self.wave_index >= 1 and (self.spawned + 1) % 6 == 0:
             enemy_type = "flyer"
         elif self.wave_index >= 2 and (self.spawned + 1) % 5 == 0:
             enemy_type = "shooter"
-        speed = wave["speed"] * (1.2 if enemy_type == "flyer" else 1.0)
+        speed = wave["speed"]
+        if enemy_type == "flyer":
+            speed *= 1.2
+        elif enemy_type == "lightning":
+            speed *= 3.0
         hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.0))
-        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0)
+        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (20 if enemy_type == "ghost" else 0)
         enemy = Enemy(self.path_points, speed=speed, hp=hp, reward=reward, enemy_type=enemy_type)
         self.enemies.append(enemy)
         self.spawned += 1
@@ -2274,6 +2351,15 @@ class Game:
                     self.enemies.remove(enemy)
                 elif enemy.is_dead():
                     self.money += enemy.reward
+                    self.enemy_kills[enemy.type] = self.enemy_kills.get(enemy.type, 0) + 1
+                    save_unlocks(
+                        self.unlocked_towers,
+                        self.win_coins,
+                        load_unlocked_maps(),
+                        highest_cleared_wave=self.highest_cleared_wave,
+                        achievements=self.achievements,
+                        enemy_kills=self.enemy_kills,
+                    )
                     self.enemies.remove(enemy)
 
             for enemy in self.enemies:
@@ -2653,7 +2739,7 @@ class Game:
             surface.blit(developer_text, (20, 12))
             spawn_button_y = 36
             self.developer_spawn_rects = {}
-            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter")]
+            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("ghost", "Ghost")]
             for index, (enemy_type, label) in enumerate(enemy_types):
                 rect = pygame.Rect(20 + index * 110, spawn_button_y, 100, 28)
                 self.developer_spawn_rects[enemy_type] = rect
@@ -2840,6 +2926,96 @@ def draw_achievements_button(surface):
             ACHIEVEMENTS_BUTTON_RECT.centerx - label.get_width() // 2,
             ACHIEVEMENTS_BUTTON_RECT.centery - label.get_height() // 2,
         ),
+    )
+
+
+def draw_bestiary_button(surface):
+    pygame.draw.rect(surface, (92, 118, 82), BESTIARY_BUTTON_RECT, border_radius=7)
+    pygame.draw.rect(surface, (170, 225, 170), BESTIARY_BUTTON_RECT, 2, border_radius=7)
+    label = FONT.render("Bestiary", True, (255, 255, 255))
+    surface.blit(
+        label,
+        (
+            BESTIARY_BUTTON_RECT.centerx - label.get_width() // 2,
+            BESTIARY_BUTTON_RECT.centery - label.get_height() // 2,
+        ),
+    )
+
+
+def draw_bestiary_window(surface):
+    surface.fill((18, 24, 36))
+    title = FONT.render("Bestiary", True, (255, 225, 145))
+    surface.blit(title, (32, 24))
+    subtitle = FONT.render("Enemy intel", True, (190, 210, 225))
+    surface.blit(subtitle, (32, 58))
+
+    def wrap_text(message, max_chars):
+        words = message.split()
+        lines = []
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if len(candidate) <= max_chars or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines or [message]
+
+    enemy_kills = load_enemy_kills()
+    for index, (enemy_id, info) in enumerate(BESTIARY.items()):
+        rect = pygame.Rect(32, 92 + index * 90, 536, 76)
+        pygame.draw.rect(surface, (48, 58, 72), rect, border_radius=5)
+        pygame.draw.rect(surface, (145, 185, 160), rect, 1, border_radius=5)
+        center_x = rect.x + 28
+        center_y = rect.centery - 4
+        if enemy_id == "ground":
+            pygame.draw.polygon(surface, (125, 35, 45), [(center_x - 14, center_y - 5), (center_x - 11, center_y - 18), (center_x - 4, center_y - 12), (center_x, center_y - 22), (center_x + 5, center_y - 12), (center_x + 13, center_y - 18), (center_x + 14, center_y + 8), (center_x + 5, center_y + 17), (center_x - 7, center_y + 15)])
+            pygame.draw.circle(surface, (215, 55, 65), (center_x, center_y), 12)
+        elif enemy_id == "flyer":
+            pygame.draw.polygon(surface, (70, 150, 155), [(center_x - 8, center_y), (center_x - 25, center_y - 10), (center_x - 18, center_y + 8)])
+            pygame.draw.polygon(surface, (70, 150, 155), [(center_x + 8, center_y), (center_x + 25, center_y - 10), (center_x + 18, center_y + 8)])
+            pygame.draw.circle(surface, (115, 205, 210), (center_x, center_y), 13)
+        elif enemy_id == "shooter":
+            pygame.draw.polygon(surface, (105, 55, 35), [(center_x - 14, center_y - 8), (center_x - 8, center_y - 17), (center_x, center_y - 12), (center_x + 8, center_y - 17), (center_x + 14, center_y - 8), (center_x + 11, center_y + 12), (center_x, center_y + 18), (center_x - 11, center_y + 12)])
+            pygame.draw.circle(surface, (190, 105, 55), (center_x, center_y), 12)
+        else:
+            pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
+            pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
+
+        name = FONT.render(info["name"], True, (255, 255, 255))
+        speed = FONT.render(f"Speed: {info['speed']}", True, (205, 215, 225))
+        surface.blit(name, (rect.x + 54, rect.y + 8))
+        surface.blit(speed, (rect.x + 54, rect.y + 30))
+        note_lines = wrap_text(info["notes"], 42)
+        for offset, line in enumerate(note_lines[:2]):
+            notes = FONT.render(line, True, (200, 220, 235))
+            surface.blit(notes, (rect.x + 54, rect.y + 48 + offset * 14))
+        kill_count = FONT.render(f"Killed: {enemy_kills.get(enemy_id, 0)}", True, (255, 220, 120))
+        surface.blit(kill_count, (rect.right - kill_count.get_width() - 12, rect.y + 12))
+
+
+def run_bestiary_window():
+    surface = pygame.display.set_mode((600, 560))
+    pygame.display.set_caption("Bestiary")
+    clock = pygame.time.Clock()
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+        draw_bestiary_window(surface)
+        pygame.display.flip()
+        clock.tick(FPS)
+    pygame.quit()
+
+
+def open_bestiary_window():
+    return subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--bestiary"],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
     )
 
 
@@ -3080,6 +3256,7 @@ def draw_map_selection(
             ),
         )
         draw_achievements_button(surface)
+        draw_bestiary_button(surface)
     return costume_buttons
 
 
@@ -3437,6 +3614,8 @@ def main():
                     elif ACHIEVEMENTS_BUTTON_RECT.collidepoint(event.pos):
                         if achievements_process is None or achievements_process.poll() is not None:
                             achievements_process = open_achievements_window()
+                    elif BESTIARY_BUTTON_RECT.collidepoint(event.pos):
+                        open_bestiary_window()
                     elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
                         show_costume_window = True
                     elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
@@ -3504,5 +3683,7 @@ def main():
 if __name__ == "__main__":
     if "--achievements" in sys.argv:
         run_achievements_window()
+    elif "--bestiary" in sys.argv:
+        run_bestiary_window()
     else:
         main()
