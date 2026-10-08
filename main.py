@@ -11,6 +11,7 @@ pygame.init()
 
 WIDTH, HEIGHT = 840, 640
 FPS = 60
+ACHIEVEMENT_CHECK_INTERVAL = 10.0
 GRID_SIZE = 40
 PATH_WIDTH = 36
 START_MONEY = 120
@@ -165,12 +166,45 @@ STICKMAN_OBJECTS = {
 }
 
 ACHIEVEMENTS = {
-    "developer_mode": {"name": "Sick-man", "description": "Open developer mode"},
+    "developer_mode": {"name": "Hacker", "description": "Open developer mode"},
+    "the_beginning": {"name": "The Beginning", "description": "Place your first tower"},
     "first_wave": {"name": "First Wave", "description": "Clear wave 1"},
     "wave_six": {"name": "Wave Six", "description": "Clear wave 6"},
     "spiral_map": {"name": "Spiral Map", "description": "Unlock the Spiral map"},
     "first_costume": {"name": "Style Check", "description": "Buy a costume item"},
+    "code_rain": {"name": "Code Rain", "description": "Clear wave 3"},
+    "bullet_time": {"name": "Bullet-Time Tactician", "description": "Clear wave 4 without losing a life"},
+    "matrix_dodge": {"name": "Matrix Dodge", "description": "Make a flyer evade a tower"},
+    "exit_construct": {"name": "Exit the Construct", "description": "Win the campaign"},
 }
+ACHIEVEMENT_POPUP_SECONDS = 5.0
+ACHIEVEMENT_POPUPS = []
+
+
+def queue_achievement_popup(achievement_id):
+    if achievement_id not in ACHIEVEMENTS:
+        return False
+    if any(popup["achievement_id"] == achievement_id for popup in ACHIEVEMENT_POPUPS):
+        return False
+    ACHIEVEMENT_POPUPS.append({
+        "achievement_id": achievement_id,
+        "remaining": ACHIEVEMENT_POPUP_SECONDS,
+    })
+    return True
+
+
+def award_achievement(achievements, achievement_id):
+    if achievement_id not in ACHIEVEMENTS or achievement_id in achievements:
+        return False
+    achievements.add(achievement_id)
+    queue_achievement_popup(achievement_id)
+    return True
+
+
+def update_achievement_popups(dt):
+    for popup in ACHIEVEMENT_POPUPS:
+        popup["remaining"] -= dt
+    ACHIEVEMENT_POPUPS[:] = [popup for popup in ACHIEVEMENT_POPUPS if popup["remaining"] > 0]
 
 
 def load_achievements():
@@ -442,13 +476,17 @@ def check_achievements(game=None):
         highest_cleared_wave = max(highest_cleared_wave, game.highest_cleared_wave)
 
     if load_developer_mode_state():
-        achievements.add("developer_mode")
+        award_achievement(achievements, "developer_mode")
     if highest_cleared_wave >= 1:
-        achievements.add("first_wave")
+        award_achievement(achievements, "first_wave")
     if highest_cleared_wave >= 6:
-        achievements.add("wave_six")
+        award_achievement(achievements, "wave_six")
+    if highest_cleared_wave >= 3:
+        award_achievement(achievements, "code_rain")
+    if game is not None and not game.sandbox and game.victory:
+        award_achievement(achievements, "exit_construct")
     if "Spiral" in load_unlocked_maps():
-        achievements.add("spiral_map")
+        award_achievement(achievements, "spiral_map")
     if (
         load_stickman_costumes()[0] - {"classic"}
         or load_stickman_hats() - {"classic"}
@@ -456,7 +494,7 @@ def check_achievements(game=None):
         or load_stickman_suits() - {"classic"}
         or load_stickman_objects() - {"none"}
     ):
-        achievements.add("first_costume")
+        award_achievement(achievements, "first_costume")
 
     if game is not None:
         game.achievements = set(achievements)
@@ -470,6 +508,14 @@ def check_achievements(game=None):
             achievements=achievements,
         )
     return achievements
+
+
+def update_achievement_check_timer(elapsed, dt, game=None):
+    elapsed += dt
+    if elapsed >= ACHIEVEMENT_CHECK_INTERVAL:
+        check_achievements(game)
+        elapsed %= ACHIEVEMENT_CHECK_INTERVAL
+    return elapsed
 
 
 MAPS = {
@@ -708,6 +754,7 @@ class Enemy:
         self.slow_timer = 0.0
         self.slow_amount = 1.0
         self.loser_hat = False
+        self.dodged_tower = False
 
     def update(self, dt, towers):
         if self.finished:
@@ -739,6 +786,7 @@ class Enemy:
                 tower_dist = math.hypot(tx_dist, ty_dist)
                 danger_radius = tower.range + 24
                 if 0 < tower_dist < danger_radius:
+                    self.dodged_tower = True
                     strength = (danger_radius - tower_dist) / danger_radius
                     avoid_x -= (tx_dist / tower_dist) * strength * 70
                     avoid_y -= (ty_dist / tower_dist) * strength * 70
@@ -1536,6 +1584,10 @@ class Game:
         self.highest_cleared_wave = max(self.highest_cleared_wave, self.wave_index + 1)
         if self.wave_index + 1 >= 1:
             self.unlock_achievement("first_wave")
+        if self.wave_index + 1 >= 3:
+            self.unlock_achievement("code_rain")
+        if self.wave_index + 1 >= 4 and self.lives == START_LIVES:
+            self.unlock_achievement("bullet_time")
         if self.wave_index + 1 >= 6:
             self.wave_six_cleared = True
             self.unlock_achievement("wave_six")
@@ -1568,11 +1620,8 @@ class Game:
             tower.shooter_immunity = True
 
     def unlock_achievement(self, achievement_id):
-        if achievement_id not in ACHIEVEMENTS:
+        if not award_achievement(self.achievements, achievement_id):
             return False
-        if achievement_id in self.achievements:
-            return False
-        self.achievements.add(achievement_id)
         save_unlocks(
             self.unlocked_towers,
             self.win_coins,
@@ -2216,6 +2265,10 @@ class Game:
         if not self.enemies_paused:
             for enemy in list(self.enemies):
                 enemy.update(dt, self.towers)
+                if enemy.dodged_tower:
+                    enemy.dodged_tower = False
+                    if not self.sandbox:
+                        self.unlock_achievement("matrix_dodge")
                 if enemy.reached_goal() and not enemy.is_dead():
                     self.lives -= 1
                     self.enemies.remove(enemy)
@@ -2287,6 +2340,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.mines.append(Mine(grid_x, grid_y))
+            self.record_tower_placement()
             self.money -= MINE_COST
             return
         if self.selected_tower == "walker":
@@ -2297,6 +2351,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
+            self.record_tower_placement()
             self.money -= WALKER_COST
             return
         if self.selected_tower == "gunner":
@@ -2308,6 +2363,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, "gunner", self.path_points))
+            self.record_tower_placement()
             self.money -= gunner_cost
             return
         if self.selected_tower in TOWER_TYPES and TOWER_TYPES[self.selected_tower].get("win_cost"):
@@ -2318,6 +2374,7 @@ class Game:
             if not self.can_place(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
+            self.record_tower_placement()
             self.win_coins -= TOWER_TYPES[self.selected_tower]["win_cost"]
             if self.selected_tower == "basic":
                 self.unlock_mine_tower_if_ready()
@@ -2334,9 +2391,14 @@ class Game:
         if self.money < tower_info["cost"]:
             return
         self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
+        self.record_tower_placement()
         self.money -= tower_info["cost"]
         if self.selected_tower == "basic":
             self.unlock_mine_tower_if_ready()
+
+    def record_tower_placement(self):
+        if not self.sandbox:
+            self.unlock_achievement("the_beginning")
 
     def can_place(self, x, y):
         for px, py in self.path_points:
@@ -2658,6 +2720,37 @@ def draw_achievement_icon(surface, achievement_id, center):
         pygame.draw.line(surface, (225, 225, 220), (center_x - 8, center_y - 14), (center_x - 8, center_y + 14), 3)
         pygame.draw.polygon(surface, (80, 205, 125), [(center_x - 6, center_y - 13), (center_x + 11, center_y - 8), (center_x - 6, center_y - 2)])
         pygame.draw.circle(surface, (255, 220, 90), (center_x + 1, center_y - 8), 2)
+    elif achievement_id == "the_beginning":
+        for offset in (-10, 0, 10):
+            pygame.draw.line(surface, (255, 220, 115), (center_x + offset, center_y - 14), (center_x + offset, center_y - 10), 2)
+        pygame.draw.circle(surface, (255, 195, 70), (center_x, center_y), 8)
+        pygame.draw.rect(surface, (57, 105, 77), (center_x - 10, center_y + 2, 20, 10))
+        pygame.draw.line(surface, (235, 240, 215), (center_x - 12, center_y + 3), (center_x + 12, center_y + 3), 2)
+    elif achievement_id == "code_rain":
+        for column, lengths in enumerate(((5, 8, 4), (8, 5, 7), (4, 7, 5))):
+            x = center_x - 9 + column * 9
+            for row, length in enumerate(lengths):
+                y = center_y - 13 + row * 9 + column * 2
+                pygame.draw.rect(surface, (75, 255 - row * 35, 115), (x, y, 4, length), border_radius=1)
+    elif achievement_id == "bullet_time":
+        pygame.draw.circle(surface, (100, 235, 160), center, 12, 2)
+        pygame.draw.line(surface, (245, 245, 225), (center_x, center_y - 8), (center_x + 5, center_y + 1), 3)
+        pygame.draw.circle(surface, (255, 215, 90), (center_x + 5, center_y + 1), 3)
+        pygame.draw.line(surface, (80, 215, 140), (center_x - 14, center_y - 8), (center_x - 10, center_y - 8), 2)
+        pygame.draw.line(surface, (80, 215, 140), (center_x - 14, center_y), (center_x - 10, center_y), 2)
+    elif achievement_id == "matrix_dodge":
+        pygame.draw.line(surface, (80, 245, 145), (center_x - 15, center_y - 10), (center_x - 3, center_y - 10), 2)
+        pygame.draw.line(surface, (80, 245, 145), (center_x - 15, center_y), (center_x - 7, center_y), 2)
+        pygame.draw.circle(surface, (240, 245, 225), (center_x + 5, center_y - 8), 4)
+        pygame.draw.line(surface, (240, 245, 225), (center_x + 3, center_y - 3), (center_x - 4, center_y + 5), 3)
+        pygame.draw.line(surface, (240, 245, 225), (center_x, center_y), (center_x + 10, center_y + 4), 2)
+        pygame.draw.line(surface, (240, 245, 225), (center_x - 3, center_y + 4), (center_x - 9, center_y + 11), 2)
+        pygame.draw.line(surface, (240, 245, 225), (center_x - 3, center_y + 4), (center_x + 3, center_y + 12), 2)
+    elif achievement_id == "exit_construct":
+        pygame.draw.rect(surface, (80, 235, 145), (center_x - 10, center_y - 14, 20, 28), 2)
+        pygame.draw.rect(surface, (190, 255, 215), (center_x - 4, center_y - 8, 9, 22), 1)
+        pygame.draw.line(surface, (255, 225, 100), (center_x + 1, center_y + 3), (center_x + 8, center_y + 3), 2)
+        pygame.draw.polygon(surface, (255, 225, 100), [(center_x + 8, center_y), (center_x + 12, center_y + 3), (center_x + 8, center_y + 6)])
     elif achievement_id == "wave_six":
         pygame.draw.polygon(surface, (90, 165, 240), [(center_x - 10, center_y - 12), (center_x - 3, center_y - 8), (center_x - 6, center_y + 3), (center_x - 11, center_y - 2)])
         pygame.draw.polygon(surface, (90, 165, 240), [(center_x + 10, center_y - 12), (center_x + 3, center_y - 8), (center_x + 6, center_y + 3), (center_x + 11, center_y - 2)])
@@ -2679,6 +2772,20 @@ def draw_achievement_icon(surface, achievement_id, center):
         pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4), 2)
 
 
+def draw_achievement_popups(surface):
+    for index, popup in enumerate(ACHIEVEMENT_POPUPS):
+        achievement_id = popup["achievement_id"]
+        info = ACHIEVEMENTS[achievement_id]
+        rect = pygame.Rect(WIDTH - 310, HEIGHT - 76 - index * 64, 290, 58)
+        pygame.draw.rect(surface, (27, 36, 43), rect, border_radius=6)
+        pygame.draw.rect(surface, (245, 200, 95), rect, 2, border_radius=6)
+        draw_achievement_icon(surface, achievement_id, (rect.x + 27, rect.centery))
+        heading = FONT.render("Achievement unlocked!", True, (255, 220, 130))
+        name = FONT.render(info["name"], True, (255, 255, 255))
+        surface.blit(heading, (rect.x + 54, rect.y + 5))
+        surface.blit(name, (rect.x + 54, rect.y + 29))
+
+
 def draw_achievements_window(surface, achievements):
     surface.fill((18, 24, 36))
     title = FONT.render("Achievements", True, (255, 225, 145))
@@ -2688,21 +2795,21 @@ def draw_achievements_window(surface, achievements):
     surface.blit(progress, (32, 58))
     for index, (achievement_id, info) in enumerate(ACHIEVEMENTS.items()):
         unlocked = achievement_id in achievements
-        rect = pygame.Rect(32, 92 + index * 56, 536, 46)
+        rect = pygame.Rect(32, 92 + index * 45, 536, 40)
         pygame.draw.rect(surface, (57, 105, 77) if unlocked else (48, 58, 72), rect, border_radius=5)
         pygame.draw.rect(surface, (145, 185, 160) if unlocked else (105, 120, 140), rect, 1, border_radius=5)
         name = FONT.render(info["name"], True, (255, 255, 255))
         description = FONT.render(info["description"], True, (205, 215, 225))
         if unlocked:
             draw_achievement_icon(surface, achievement_id, (rect.x + 26, rect.centery))
-        surface.blit(name, (rect.x + 58, rect.y + 4))
-        surface.blit(description, (rect.x + 58, rect.y + 24))
+        surface.blit(name, (rect.x + 58, rect.y + 1))
+        surface.blit(description, (rect.x + 58, rect.y + 20))
         status = FONT.render("Unlocked" if unlocked else "Locked", True, (185, 245, 195) if unlocked else (165, 175, 190))
         surface.blit(status, (rect.right - status.get_width() - 12, rect.y + 14))
 
 
 def run_achievements_window():
-    surface = pygame.display.set_mode((600, 420))
+    surface = pygame.display.set_mode((600, 560))
     pygame.display.set_caption("Achievements")
     clock = pygame.time.Clock()
     running = True
@@ -3021,9 +3128,12 @@ def main():
     running = True
     menu_costume_buttons = {}
     achievements_process = None
+    achievement_check_timer = 0.0
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
+        achievement_check_timer = update_achievement_check_timer(achievement_check_timer, dt, game)
+        update_achievement_popups(dt)
         if in_menu:
             menu_developer_mode_opened = load_developer_mode_state()
             menu_stickman_costumes, menu_equipped_costume = load_stickman_costumes()
@@ -3184,8 +3294,8 @@ def main():
                                         menu_stickman_hat = selected_hat
                                         if selected_hat != "classic":
                                             achievements = load_achievements()
-                                            achievements.add("first_costume")
                                             if not sandbox_mode:
+                                                award_achievement(achievements, "first_costume")
                                                 save_unlocks(
                                                     load_unlocks(),
                                                     menu_win_coins,
@@ -3216,8 +3326,8 @@ def main():
                                         menu_stickman_leg = selected_leg
                                         if selected_leg != "classic":
                                             achievements = load_achievements()
-                                            achievements.add("first_costume")
                                             if not sandbox_mode:
+                                                award_achievement(achievements, "first_costume")
                                                 save_unlocks(
                                                     load_unlocks(),
                                                     menu_win_coins,
@@ -3248,8 +3358,8 @@ def main():
                                         menu_stickman_suit = selected_suit
                                         if selected_suit != "classic":
                                             achievements = load_achievements()
-                                            achievements.add("first_costume")
                                             if not sandbox_mode:
+                                                award_achievement(achievements, "first_costume")
                                                 save_unlocks(
                                                     load_unlocks(),
                                                     menu_win_coins,
@@ -3280,8 +3390,8 @@ def main():
                                         menu_stickman_object = selected_object
                                         if selected_object != "none":
                                             achievements = load_achievements()
-                                            achievements.add("first_costume")
                                             if not sandbox_mode:
+                                                award_achievement(achievements, "first_costume")
                                                 save_unlocks(
                                                     load_unlocks(),
                                                     menu_win_coins,
@@ -3336,7 +3446,7 @@ def main():
                             selected_map = "Spiral"
                             if not sandbox_mode:
                                 achievements = load_achievements()
-                                achievements.add("spiral_map")
+                                award_achievement(achievements, "spiral_map")
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps, achievements=achievements)
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
@@ -3384,6 +3494,7 @@ def main():
             game.update(dt)
             game.draw(SCREEN)
 
+        draw_achievement_popups(SCREEN)
         pygame.display.flip()
 
     pygame.quit()

@@ -124,6 +124,47 @@ class SandboxModeTest(unittest.TestCase):
             if os.path.exists(save_path):
                 os.remove(save_path)
 
+    def test_first_successful_tower_placement_unlocks_achievement(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                self.assertEqual(main.ACHIEVEMENTS["the_beginning"]["name"], "The Beginning")
+                game = Game(MAPS["Classic"])
+                game.place_tower((280, 200))
+                self.assertNotIn("the_beginning", main.load_achievements())
+
+                game.place_tower((100, 100))
+                self.assertIn("the_beginning", main.load_achievements())
+                self.assertEqual(len(game.towers), 1)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_sandbox_tower_placement_does_not_unlock_campaign_achievement(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"], sandbox=True)
+                game.place_tower((100, 100))
+                self.assertNotIn("the_beginning", main.load_achievements())
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
     def test_saved_progress_reconciles_achievements(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
             json.dump({
@@ -133,6 +174,7 @@ class SandboxModeTest(unittest.TestCase):
                 "unlocked_maps": ["Classic", "Spiral"],
                 "developer_mode_opened": True,
                 "stickman_suits": ["classic", "fish"],
+                "achievements": ["the_beginning", "bullet_time", "matrix_dodge", "exit_construct"],
             }, save_file)
             save_path = save_file.name
 
@@ -140,14 +182,26 @@ class SandboxModeTest(unittest.TestCase):
             original_save_file = main.SAVE_FILE
             main.SAVE_FILE = save_path
             try:
+                main.ACHIEVEMENT_POPUPS.clear()
                 earned = main.check_achievements()
                 self.assertEqual(earned, set(main.ACHIEVEMENTS))
                 self.assertEqual(main.load_achievements(), earned)
+                queued_ids = {popup["achievement_id"] for popup in main.ACHIEVEMENT_POPUPS}
+                self.assertIn("first_wave", queued_ids)
             finally:
                 main.SAVE_FILE = original_save_file
         finally:
             if os.path.exists(save_path):
                 os.remove(save_path)
+
+    def test_achievements_are_rechecked_every_ten_seconds(self):
+        with patch("main.check_achievements") as check:
+            elapsed = main.update_achievement_check_timer(0.0, 9.9)
+            check.assert_not_called()
+
+            elapsed = main.update_achievement_check_timer(elapsed, 0.1)
+            check.assert_called_once_with(None)
+            self.assertAlmostEqual(elapsed, 0.0)
 
     def test_campaign_end_rechecks_achievements_on_win_and_loss(self):
         for outcome in ("loss", "win"):
@@ -175,16 +229,86 @@ class SandboxModeTest(unittest.TestCase):
                     if os.path.exists(save_path):
                         os.remove(save_path)
 
+    def test_matrix_themed_achievements_track_campaign_milestones(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                game = Game(MAPS["Classic"])
+                game.wave_index = 3
+                game.spawned = WAVES[3]["count"]
+                game.complete_wave_unlocks()
+                self.assertIn("code_rain", main.load_achievements())
+                self.assertIn("bullet_time", main.load_achievements())
+
+                game.victory = True
+                game.game_over = True
+                main.check_achievements(game)
+                self.assertIn("exit_construct", main.load_achievements())
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_matrix_dodge_is_awarded_when_flyer_evades_tower(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+            save_path = save_file.name
+
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            main.ACHIEVEMENT_POPUPS.clear()
+            try:
+                game = Game(MAPS["Classic"])
+                game.wave_ready = True
+                game.enemies.append(Enemy(MAPS["Classic"], speed=6, hp=100, reward=1, enemy_type="flyer"))
+                game.towers.append(Tower(40, 200, "basic"))
+
+                game.update(0.01)
+
+                self.assertIn("matrix_dodge", main.load_achievements())
+                self.assertTrue(any(popup["achievement_id"] == "matrix_dodge" for popup in main.ACHIEVEMENT_POPUPS))
+
+                with open(save_path, "w", encoding="utf-8") as save_handle:
+                    json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_handle)
+                sandbox_game = Game(MAPS["Classic"], sandbox=True)
+                sandbox_game.wave_ready = True
+                sandbox_game.enemies.append(Enemy(MAPS["Classic"], speed=6, hp=100, reward=1, enemy_type="flyer"))
+                sandbox_game.towers.append(Tower(40, 200, "basic"))
+                sandbox_game.update(0.01)
+                self.assertNotIn("matrix_dodge", sandbox_game.achievements)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
     def test_achievements_window_renders_and_launches_separately(self):
-        locked_surface = pygame.Surface((600, 420))
-        unlocked_surface = pygame.Surface((600, 420))
+        locked_surface = pygame.Surface((600, 560))
+        unlocked_surface = pygame.Surface((600, 560))
         main.draw_achievements_window(locked_surface, set())
-        main.draw_achievements_window(unlocked_surface, {"developer_mode"})
-        self.assertEqual(unlocked_surface.get_size(), (600, 420))
-        locked_icon_colors = {tuple(locked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 132)}
-        unlocked_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 132)}
+        main.draw_achievements_window(unlocked_surface, set(main.ACHIEVEMENTS))
+        self.assertEqual(unlocked_surface.get_size(), (600, 560))
+        locked_icon_colors = {tuple(locked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 126)}
+        unlocked_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(98, 126)}
+        beginning_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(143, 171)}
+        code_rain_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(368, 396)}
+        bullet_time_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(413, 441)}
+        matrix_dodge_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(458, 486)}
+        exit_construct_icon_colors = {tuple(unlocked_surface.get_at((x, y))) for x in range(38, 74) for y in range(503, 531)}
         self.assertEqual(len(locked_icon_colors), 1)
         self.assertGreater(len(unlocked_icon_colors), 1)
+        self.assertGreater(len(beginning_icon_colors), 1)
+        self.assertGreater(len(code_rain_icon_colors), 1)
+        self.assertGreater(len(bullet_time_icon_colors), 1)
+        self.assertGreater(len(matrix_dodge_icon_colors), 1)
+        self.assertGreater(len(exit_construct_icon_colors), 1)
 
         with patch("main.subprocess.Popen") as popen:
             main.open_achievements_window()
@@ -192,6 +316,16 @@ class SandboxModeTest(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--achievements")
         self.assertEqual(command[0], main.sys.executable)
+
+    def test_achievement_popup_renders_and_expires(self):
+        main.ACHIEVEMENT_POPUPS.clear()
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        self.assertTrue(main.queue_achievement_popup("the_beginning"))
+        main.draw_achievement_popups(surface)
+        self.assertNotEqual(surface.get_at((main.WIDTH - 310, main.HEIGHT - 70)), (0, 0, 0, 255))
+
+        main.update_achievement_popups(main.ACHIEVEMENT_POPUP_SECONDS)
+        self.assertEqual(main.ACHIEVEMENT_POPUPS, [])
 
     def test_stickman_costumes_are_saved_and_equipable(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
