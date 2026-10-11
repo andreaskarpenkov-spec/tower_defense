@@ -63,6 +63,38 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertGreater(gunner.y, 200)
 
+    def test_walker_crossing_freeze_tower_unlocks_and_saves_cactus(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic", "freeze"], "highest_cleared_wave": 4}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            path = [(20, 100), (200, 100)]
+            game = Game(path)
+            game.towers.append(Tower(70, 100, "freeze"))
+            game.walkers.append(main.Walker(100, 100, path))
+
+            game.update(0.5)
+
+            self.assertTrue(game.is_tower_unlocked("cactus"))
+            self.assertIn("cactus", main.load_progress()[0])
+        finally:
+            main.SAVE_FILE = original_save_file
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_cactus_damages_touching_enemies_without_moving(self):
+        path = [(100, 100), (200, 100)]
+        cactus = Tower(100, 100, "cactus")
+        enemy = Enemy(path, speed=0, hp=100, reward=1)
+
+        cactus.update(0.6, [enemy])
+
+        self.assertEqual((cactus.x, cactus.y), (100, 100))
+        self.assertLess(enemy.hp, 100)
+
     def test_maps_have_distinct_backgrounds(self):
         classic = Game(MAPS["Classic"], map_name="Classic")
         loop = Game(MAPS["Loop"], map_name="Loop")
@@ -86,12 +118,51 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(game.enemies[0].type, "lightning")
         self.assertAlmostEqual(game.enemies[0].base_speed, WAVES[5]["speed"] * 3.0)
 
+    def test_shielder_enemy_first_appears_in_wave_six_and_blocks_projectiles(self):
+        game = Game(MAPS["Classic"])
+        game.wave_index = 5
+        game.spawned = 5
+
+        game.spawn_enemy()
+
+        self.assertEqual(len(game.enemies), 1)
+        self.assertEqual(game.enemies[0].type, "shielder")
+
+        enemy = game.enemies[0]
+        original_hp = enemy.hp
+        enemy.x, enemy.y = 200, 200
+        projectile = main.Projectile(200, 200 - 35, enemy, 12, (255, 255, 255), speed=100)
+        self.assertTrue(projectile.update(0.05))
+        self.assertTrue(projectile.active)
+        self.assertEqual(enemy.hp, original_hp)
+
+        shield_hit = main.Projectile(247, 200, enemy, 12, (255, 255, 255), speed=100)
+        self.assertFalse(shield_hit.update(0.01))
+        self.assertFalse(shield_hit.active)
+        self.assertEqual(enemy.hp, original_hp)
+
     def test_bestiary_lists_all_enemy_types(self):
         self.assertIn("ground", main.BESTIARY)
         self.assertIn("flyer", main.BESTIARY)
         self.assertIn("shooter", main.BESTIARY)
         self.assertIn("lightning", main.BESTIARY)
         self.assertIn("wave 6", main.BESTIARY["lightning"]["notes"].lower())
+
+    def test_bestiary_scroll_reaches_last_enemy_entry(self):
+        surface = pygame.Surface((600, 560))
+
+        scroll_offset = main.draw_bestiary_window(surface, 1000)
+
+        self.assertEqual(scroll_offset, main.bestiary_scroll_limit(560))
+        self.assertGreater(scroll_offset, 0)
+
+    def test_every_bestiary_enemy_has_visible_face_details(self):
+        surface = pygame.Surface((600, 700))
+        main.draw_bestiary_window(surface)
+
+        for index, enemy_id in enumerate(main.BESTIARY):
+            with self.subTest(enemy_id=enemy_id):
+                self.assertEqual(surface.get_at((55, 123 + index * 90))[:3], (35, 25, 25))
 
     def test_ghost_enemy_appears_in_wave_seven_and_turns_invisible(self):
         game = Game(MAPS["Classic"])
@@ -347,6 +418,19 @@ class SandboxModeTest(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--achievements")
         self.assertEqual(command[0], main.sys.executable)
+
+    def test_every_achievement_icon_animates_over_time(self):
+        for achievement_id in main.ACHIEVEMENTS:
+            with self.subTest(achievement_id=achievement_id):
+                first_frame = pygame.Surface((64, 64), pygame.SRCALPHA)
+                second_frame = pygame.Surface((64, 64), pygame.SRCALPHA)
+                main.draw_achievement_icon(first_frame, achievement_id, (32, 32), 0.0)
+                main.draw_achievement_icon(second_frame, achievement_id, (32, 32), 1.3)
+
+                self.assertNotEqual(
+                    pygame.image.tobytes(first_frame, "RGBA"),
+                    pygame.image.tobytes(second_frame, "RGBA"),
+                )
 
     def test_achievement_popup_renders_and_expires(self):
         main.ACHIEVEMENT_POPUPS.clear()

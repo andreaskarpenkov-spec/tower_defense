@@ -21,6 +21,7 @@ MINE_DAMAGE = 160
 WALKER_COST = 60
 WALKER_DAMAGE = 24
 FONT = pygame.font.SysFont("arial", 18)
+MATRIX_RAIN_FONT = pygame.font.SysFont("monospace", 10, bold=True)
 
 TOWER_TYPES = {
     "basic": {
@@ -87,6 +88,15 @@ TOWER_TYPES = {
         "cost": 110,
         "color": (110, 190, 255),
         "ring": (170, 230, 255),
+    },
+    "cactus": {
+        "name": "Cactus",
+        "range": 0,
+        "cooldown": 0.6,
+        "damage": 32,
+        "cost": 95,
+        "color": (80, 165, 85),
+        "ring": (145, 220, 125),
     },
     "boinger": {
         "name": "Boinger",
@@ -182,6 +192,7 @@ BESTIARY = {
     "flyer": {"name": "Flyer", "speed": "fast and evasive", "notes": "A winged enemy that dodges towers and appears in later waves."},
     "shooter": {"name": "Shooter", "speed": "mid-speed with ranged fire", "notes": "This enemy launches projectiles at nearby towers."},
     "lightning": {"name": "Lightning", "speed": "3x regular speed", "notes": "A blinding fast enemy that first appears in wave 6."},
+    "shielder": {"name": "Shielder", "speed": "slow but stubborn", "notes": "A wave 6 defender that carries an orbiting shield that blocks incoming projectiles."},
     "ghost": {"name": "Ghost", "speed": "standard", "notes": "A wave 7 spirit that flashes visible for 10 sec then invisible for 5 sec."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
@@ -237,7 +248,7 @@ def load_progress():
                 unlocked = {
                     tower
                     for tower in data.get("unlocked_towers", [])
-                    if tower in TOWER_UNLOCK_WAVES or tower == "basic"
+                    if tower in TOWER_UNLOCK_WAVES or tower in {"basic", "cactus"}
                 }
                 win_coins = int(data.get("win_coins", 0) or 0)
                 if win_coins < 0:
@@ -791,6 +802,44 @@ class Enemy:
         self.dodged_tower = False
         self.ghost_visible = True
         self.ghost_phase_timer = 10.0
+        self.shield_angle = 0.0
+        self.shield_radius = 30
+
+    def blocks_projectile_path(self, start_x, start_y, end_x, end_y, projectile_radius=5):
+        if self.type != "shielder":
+            return False
+
+        shield_x = self.x + math.cos(self.shield_angle) * self.shield_radius
+        shield_y = self.y + math.sin(self.shield_angle) * self.shield_radius
+        cosine = math.cos(self.shield_angle)
+        sine = math.sin(self.shield_angle)
+
+        def to_local(x, y):
+            relative_x = x - shield_x
+            relative_y = y - shield_y
+            return relative_x * cosine + relative_y * sine, -relative_x * sine + relative_y * cosine
+
+        local_start = to_local(start_x, start_y)
+        local_end = to_local(end_x, end_y)
+        half_width = 14 + projectile_radius
+        half_height = 6 + projectile_radius
+        minimum_t = 0.0
+        maximum_t = 1.0
+        for origin, destination, extent in zip(local_start, local_end, (half_width, half_height)):
+            delta = destination - origin
+            if abs(delta) < 1e-9:
+                if origin < -extent or origin > extent:
+                    return False
+                continue
+            entry = (-extent - origin) / delta
+            exit = (extent - origin) / delta
+            if entry > exit:
+                entry, exit = exit, entry
+            minimum_t = max(minimum_t, entry)
+            maximum_t = min(maximum_t, exit)
+            if minimum_t > maximum_t:
+                return False
+        return maximum_t >= 0.0 and minimum_t <= 1.0
 
     def is_visible(self):
         if self.type != "ghost":
@@ -800,6 +849,8 @@ class Enemy:
     def update(self, dt, towers):
         if self.finished:
             return
+        if self.type == "shielder":
+            self.shield_angle += dt * 2.4
         if self.type == "ghost":
             self.ghost_phase_timer -= dt
             if self.ghost_phase_timer <= 0:
@@ -923,6 +974,17 @@ class Enemy:
             )
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
             eye_color = (255, 255, 255)
+        elif self.type == "shielder":
+            pygame.draw.circle(surface, (50, 80, 120), (center_x, center_y), self.shield_radius, 2)
+            orbit_x = center_x + math.cos(self.shield_angle) * self.shield_radius
+            orbit_y = center_y + math.sin(self.shield_angle) * self.shield_radius
+            shield_surface = pygame.Surface((38, 22), pygame.SRCALPHA)
+            pygame.draw.rect(shield_surface, (120, 180, 255), (3, 3, 32, 16), border_radius=3)
+            pygame.draw.rect(shield_surface, (200, 230, 255), (7, 6, 24, 10), border_radius=2)
+            rotated_shield = pygame.transform.rotate(shield_surface, -math.degrees(self.shield_angle))
+            surface.blit(rotated_shield, rotated_shield.get_rect(center=(int(orbit_x), int(orbit_y))))
+            pygame.draw.circle(surface, (110, 150, 210), (center_x, center_y), 12)
+            eye_color = (230, 245, 255)
         elif self.type == "ghost":
             if not self.is_visible():
                 return
@@ -1038,6 +1100,22 @@ class Tower:
                 return "spawn_walker"
             return None
 
+        if self.type == "cactus":
+            self.time_since_shot += dt
+            touching = [
+                enemy
+                for enemy in enemies
+                if not enemy.is_dead()
+                and not enemy.reached_goal()
+                and (enemy.type != "ghost" or enemy.is_visible())
+                and math.hypot(enemy.x - self.x, enemy.y - self.y) <= 28
+            ]
+            if touching and self.time_since_shot >= self.cooldown:
+                for enemy in touching:
+                    enemy.hp -= self.damage
+                self.time_since_shot = 0.0
+            return None
+
         if self.type == "gunner" and len(self.path_points) > 1:
             target_x, target_y = self.path_points[self.path_segment + 1]
             dx = target_x - self.x
@@ -1134,6 +1212,16 @@ class Tower:
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
             pygame.draw.line(surface, (180, 240, 255), (base_x, base_y - 2), (barrel_end_x, barrel_end_y), 4)
             pygame.draw.circle(surface, (220, 250, 255), (base_x, base_y - 12), 5)
+        elif self.type == "cactus":
+            pygame.draw.rect(surface, (45, 105, 55), (base_x - 6, base_y - 12, 12, 25), border_radius=5)
+            pygame.draw.rect(surface, (55, 145, 70), (base_x - 4, base_y - 10, 8, 21), border_radius=4)
+            pygame.draw.line(surface, (45, 105, 55), (base_x - 5, base_y + 1), (base_x - 12, base_y + 1), 5)
+            pygame.draw.line(surface, (45, 105, 55), (base_x - 12, base_y + 1), (base_x - 12, base_y - 6), 5)
+            pygame.draw.line(surface, (45, 105, 55), (base_x + 5, base_y - 4), (base_x + 12, base_y - 4), 5)
+            pygame.draw.line(surface, (45, 105, 55), (base_x + 12, base_y - 4), (base_x + 12, base_y - 10), 5)
+            for thorn_y in (-7, 0, 7):
+                pygame.draw.line(surface, (225, 240, 190), (base_x - 2, base_y + thorn_y), (base_x - 6, base_y + thorn_y - 2), 2)
+                pygame.draw.line(surface, (225, 240, 190), (base_x + 2, base_y + thorn_y), (base_x + 6, base_y + thorn_y - 2), 2)
         elif self.type == "warden":
             pygame.draw.rect(surface, (25, 50, 25), (base_x - 12, base_y - 14, 24, 28))
             pygame.draw.rect(surface, (100, 170, 90), (base_x - 10, base_y - 12, 20, 24))
@@ -1207,12 +1295,17 @@ class Projectile:
         dx = self.target.x - self.x
         dy = self.target.y - self.y
         distance = math.hypot(dx, dy)
+        step = min(self.speed * dt, distance)
+        next_x = self.x if distance == 0 else self.x + dx / distance * step
+        next_y = self.y if distance == 0 else self.y + dy / distance * step
+        if hasattr(self.target, "blocks_projectile_path") and self.target.blocks_projectile_path(self.x, self.y, next_x, next_y):
+            self.active = False
+            return False
         if distance <= 6 or distance == 0:
             self.target.hp -= self.damage
             self.active = False
             return False
 
-        step = self.speed * dt
         if step >= distance:
             self.x, self.y = self.target.x, self.target.y
             self.target.hp -= self.damage
@@ -1240,6 +1333,12 @@ class FreezeProjectile(Projectile):
         dx = self.target.x - self.x
         dy = self.target.y - self.y
         distance = math.hypot(dx, dy)
+        step = min(self.speed * dt, distance)
+        next_x = self.x if distance == 0 else self.x + dx / distance * step
+        next_y = self.y if distance == 0 else self.y + dy / distance * step
+        if hasattr(self.target, "blocks_projectile_path") and self.target.blocks_projectile_path(self.x, self.y, next_x, next_y):
+            self.active = False
+            return False
         if distance <= 6 or distance == 0:
             self.target.hp -= self.damage
             self.target.slow_amount = self.slow_amount
@@ -1247,7 +1346,6 @@ class FreezeProjectile(Projectile):
             self.active = False
             return False
 
-        step = self.speed * dt
         if step >= distance:
             self.x, self.y = self.target.x, self.target.y
             self.target.hp -= self.damage
@@ -1278,6 +1376,9 @@ class ShooterProjectile:
             self.active = False
             return False
         if hasattr(self.target, "reached_goal") and self.target.reached_goal():
+            self.active = False
+            return False
+        if hasattr(self.target, "is_projectile_blocked") and self.target.is_projectile_blocked(self.x, self.y):
             self.active = False
             return False
 
@@ -1395,12 +1496,17 @@ class BombProjectile:
         dx = self.target.x - self.x
         dy = self.target.y - self.y
         distance = math.hypot(dx, dy)
+        step = min(self.speed * dt, distance)
+        next_x = self.x if distance == 0 else self.x + dx / distance * step
+        next_y = self.y if distance == 0 else self.y + dy / distance * step
+        if hasattr(self.target, "blocks_projectile_path") and self.target.blocks_projectile_path(self.x, self.y, next_x, next_y):
+            self.active = False
+            return False
         if distance <= 10 or distance == 0:
             self._explode()
             self.active = False
             return False
 
-        step = self.speed * dt
         if step >= distance:
             self.x, self.y = self.target.x, self.target.y
             self._explode()
@@ -1668,6 +1774,29 @@ class Game:
                 self.unlocked_towers.add("mine_tower")
                 return
 
+    def unlock_cactus_from_walker(self, walker, previous_position):
+        if self.sandbox or "cactus" in self.unlocked_towers:
+            return False
+        previous_x, previous_y = previous_position
+        for tower in self.towers:
+            if tower.type != "freeze":
+                continue
+            distance = tower._distance_to_segment(
+                tower.x, tower.y, previous_x, previous_y, walker.x, walker.y
+            )
+            if distance <= walker.radius + 16:
+                self.unlocked_towers.add("cactus")
+                save_unlocks(
+                    self.unlocked_towers,
+                    self.win_coins,
+                    load_unlocked_maps(),
+                    highest_cleared_wave=self.highest_cleared_wave,
+                    achievements=self.achievements,
+                    enemy_kills=self.enemy_kills,
+                )
+                return True
+        return False
+
     def upgrade_tower(self, mouse_pos):
         for tower in self.towers:
             if math.hypot(tower.x - mouse_pos[0], tower.y - mouse_pos[1]) <= 24:
@@ -1751,7 +1880,7 @@ class Game:
             enemy.y = clamp(enemy.y + dy, 0, HEIGHT)
 
     def set_developer_spawn_type(self, enemy_type):
-        if enemy_type in {"ground", "flyer", "shooter", "lightning", "ghost"}:
+        if enemy_type in {"ground", "flyer", "shooter", "lightning", "shielder", "ghost"}:
             self.developer_spawn_type = enemy_type
 
     def developer_spawn_enemy(self):
@@ -1766,6 +1895,8 @@ class Game:
             enemy = Enemy(self.path_points, speed=4.5, hp=220, reward=28, enemy_type="shooter")
         elif enemy_type == "lightning":
             enemy = Enemy(self.path_points, speed=18.0, hp=220, reward=35, enemy_type="lightning")
+        elif enemy_type == "shielder":
+            enemy = Enemy(self.path_points, speed=4.8, hp=260, reward=40, enemy_type="shielder")
         else:
             enemy = Enemy(self.path_points, speed=5.0, hp=210, reward=36, enemy_type="ghost")
         self.enemies.append(enemy)
@@ -2272,6 +2403,8 @@ class Game:
         enemy_type = "ground"
         if self.wave_index >= 6 and (self.spawned == 0 or (self.spawned + 1) % 5 == 0):
             enemy_type = "ghost"
+        elif self.wave_index >= 5 and (self.spawned + 1) % 6 == 0:
+            enemy_type = "shielder"
         elif self.wave_index >= 5 and (self.spawned == 0 or (self.spawned + 1) % 4 == 0):
             enemy_type = "lightning"
         elif self.wave_index >= 1 and (self.spawned + 1) % 6 == 0:
@@ -2283,8 +2416,10 @@ class Game:
             speed *= 1.2
         elif enemy_type == "lightning":
             speed *= 3.0
-        hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.0))
-        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (20 if enemy_type == "ghost" else 0)
+        elif enemy_type == "shielder":
+            speed *= 0.9
+        hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.2 if enemy_type == "shielder" else 1.0))
+        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (18 if enemy_type == "shielder" else 0) + (20 if enemy_type == "ghost" else 0)
         enemy = Enemy(self.path_points, speed=speed, hp=hp, reward=reward, enemy_type=enemy_type)
         self.enemies.append(enemy)
         self.spawned += 1
@@ -2385,7 +2520,10 @@ class Game:
                 self.mines.remove(mine)
 
         for walker in list(self.walkers):
-            if not walker.update(dt, self.enemies):
+            previous_position = (walker.x, walker.y)
+            walker_active = walker.update(dt, self.enemies)
+            self.unlock_cactus_from_walker(walker, previous_position)
+            if not walker_active:
                 self.walkers.remove(walker)
 
         for projectile in list(self.projectiles):
@@ -2734,12 +2872,14 @@ class Game:
             f"Press A={spawner_label} B={gunner_label}",
             "Click tower to upgrade (+$80)",
         ]
+        if self.is_tower_unlocked("cactus"):
+            status.append(f"Press C=Cactus (${TOWER_TYPES['cactus']['cost']})")
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
             spawn_button_y = 36
             self.developer_spawn_rects = {}
-            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("ghost", "Ghost")]
+            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("shielder", "Shielder"), ("ghost", "Ghost")]
             for index, (enemy_type, label) in enumerate(enemy_types):
                 rect = pygame.Rect(20 + index * 110, spawn_button_y, 100, 28)
                 self.developer_spawn_rects[enemy_type] = rect
@@ -2793,53 +2933,73 @@ class Game:
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
 
 
-def draw_achievement_icon(surface, achievement_id, center):
+def draw_achievement_icon_art(surface, achievement_id, center, elapsed_seconds):
     center_x, center_y = center
     if achievement_id == "developer_mode":
+        arm_swing = round(math.sin(elapsed_seconds * 4.2) * 4)
         pygame.draw.rect(surface, (45, 55, 65), (center_x - 10, center_y - 13, 20, 5))
         pygame.draw.rect(surface, (210, 75, 65), (center_x - 7, center_y - 19, 14, 7))
         pygame.draw.circle(surface, (245, 205, 155), (center_x, center_y - 3), 6)
         pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 3), (center_x, center_y + 13), 3)
-        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x - 8, center_y + 11), 3)
-        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x + 8, center_y + 11), 3)
+        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x - 8, center_y + 11 - arm_swing), 3)
+        pygame.draw.line(surface, (240, 240, 240), (center_x, center_y + 6), (center_x + 8, center_y + 11 + arm_swing), 3)
     elif achievement_id == "first_wave":
+        flag_wave = round(math.sin(elapsed_seconds * 4.5) * 3)
         pygame.draw.line(surface, (225, 225, 220), (center_x - 8, center_y - 14), (center_x - 8, center_y + 14), 3)
-        pygame.draw.polygon(surface, (80, 205, 125), [(center_x - 6, center_y - 13), (center_x + 11, center_y - 8), (center_x - 6, center_y - 2)])
-        pygame.draw.circle(surface, (255, 220, 90), (center_x + 1, center_y - 8), 2)
+        pygame.draw.polygon(surface, (80, 205, 125), [(center_x - 6, center_y - 13), (center_x + 11, center_y - 8 + flag_wave), (center_x - 6, center_y - 2)])
+        pygame.draw.circle(surface, (255, 220, 90), (center_x + 1, center_y - 8 + flag_wave), 2)
     elif achievement_id == "the_beginning":
+        spark_x = center_x + round(math.sin(elapsed_seconds * 4.0) * 4)
         for offset in (-10, 0, 10):
             pygame.draw.line(surface, (255, 220, 115), (center_x + offset, center_y - 14), (center_x + offset, center_y - 10), 2)
         pygame.draw.circle(surface, (255, 195, 70), (center_x, center_y), 8)
         pygame.draw.rect(surface, (57, 105, 77), (center_x - 10, center_y + 2, 20, 10))
         pygame.draw.line(surface, (235, 240, 215), (center_x - 12, center_y + 3), (center_x + 12, center_y + 3), 2)
+        pygame.draw.circle(surface, (255, 245, 170), (spark_x, center_y - 13), 2)
     elif achievement_id == "code_rain":
-        for column, lengths in enumerate(((5, 8, 4), (8, 5, 7), (4, 7, 5))):
-            x = center_x - 9 + column * 9
-            for row, length in enumerate(lengths):
-                y = center_y - 13 + row * 9 + column * 2
-                pygame.draw.rect(surface, (75, 255 - row * 35, 115), (x, y, 4, length), border_radius=1)
+        glyph_streams = ("アイウ0", "カキク1", "サシスA")
+        fall_step = int(elapsed_seconds * 14)
+        for column, glyph_stream in enumerate(glyph_streams):
+            head_y = center_y - 16 + (fall_step * 2 + column * 11) % 36
+            x = center_x - 14 + column * 13
+            for trail in range(4):
+                glyph_y = head_y - trail * 8
+                while glyph_y < center_y - 16:
+                    glyph_y += 36
+                if glyph_y > center_y + 16:
+                    continue
+                glyph_index = (fall_step // 2 + column + trail) % len(glyph_stream)
+                color = (170, 255, 190) if trail == 0 else (90, 235 - trail * 30, 130)
+                glyph = MATRIX_RAIN_FONT.render(glyph_stream[glyph_index], True, color)
+                surface.blit(glyph, (x, glyph_y))
     elif achievement_id == "bullet_time":
+        hand_angle = -math.pi / 2 + elapsed_seconds * 1.8
+        hand_tip = (center_x + round(math.cos(hand_angle) * 9), center_y + round(math.sin(hand_angle) * 9))
         pygame.draw.circle(surface, (100, 235, 160), center, 12, 2)
-        pygame.draw.line(surface, (245, 245, 225), (center_x, center_y - 8), (center_x + 5, center_y + 1), 3)
-        pygame.draw.circle(surface, (255, 215, 90), (center_x + 5, center_y + 1), 3)
+        pygame.draw.line(surface, (245, 245, 225), center, hand_tip, 3)
+        pygame.draw.circle(surface, (255, 215, 90), hand_tip, 3)
         pygame.draw.line(surface, (80, 215, 140), (center_x - 14, center_y - 8), (center_x - 10, center_y - 8), 2)
         pygame.draw.line(surface, (80, 215, 140), (center_x - 14, center_y), (center_x - 10, center_y), 2)
     elif achievement_id == "matrix_dodge":
+        dodge = round(math.sin(elapsed_seconds * 4.0) * 4)
         pygame.draw.line(surface, (80, 245, 145), (center_x - 15, center_y - 10), (center_x - 3, center_y - 10), 2)
         pygame.draw.line(surface, (80, 245, 145), (center_x - 15, center_y), (center_x - 7, center_y), 2)
-        pygame.draw.circle(surface, (240, 245, 225), (center_x + 5, center_y - 8), 4)
-        pygame.draw.line(surface, (240, 245, 225), (center_x + 3, center_y - 3), (center_x - 4, center_y + 5), 3)
-        pygame.draw.line(surface, (240, 245, 225), (center_x, center_y), (center_x + 10, center_y + 4), 2)
-        pygame.draw.line(surface, (240, 245, 225), (center_x - 3, center_y + 4), (center_x - 9, center_y + 11), 2)
-        pygame.draw.line(surface, (240, 245, 225), (center_x - 3, center_y + 4), (center_x + 3, center_y + 12), 2)
+        pygame.draw.circle(surface, (240, 245, 225), (center_x + 5 + dodge, center_y - 8), 4)
+        pygame.draw.line(surface, (240, 245, 225), (center_x + 3 + dodge, center_y - 3), (center_x - 4 + dodge, center_y + 5), 3)
+        pygame.draw.line(surface, (240, 245, 225), (center_x + dodge, center_y), (center_x + 10 + dodge, center_y + 4), 2)
+        pygame.draw.line(surface, (240, 245, 225), (center_x - 3 + dodge, center_y + 4), (center_x - 9 + dodge, center_y + 11), 2)
+        pygame.draw.line(surface, (240, 245, 225), (center_x - 3 + dodge, center_y + 4), (center_x + 3 + dodge, center_y + 12), 2)
     elif achievement_id == "exit_construct":
+        door_open = round((math.sin(elapsed_seconds * 2.0) + 1) * 3)
         pygame.draw.rect(surface, (80, 235, 145), (center_x - 10, center_y - 14, 20, 28), 2)
-        pygame.draw.rect(surface, (190, 255, 215), (center_x - 4, center_y - 8, 9, 22), 1)
-        pygame.draw.line(surface, (255, 225, 100), (center_x + 1, center_y + 3), (center_x + 8, center_y + 3), 2)
+        pygame.draw.polygon(surface, (190, 255, 215), [(center_x - 4, center_y - 8), (center_x + 4 - door_open, center_y - 6), (center_x + 4 - door_open, center_y + 14), (center_x - 4, center_y + 14)])
+        pygame.draw.circle(surface, (255, 225, 100), (center_x + 1 - door_open, center_y + 3), 1)
+        pygame.draw.line(surface, (255, 225, 100), (center_x + 4, center_y + 3), (center_x + 8, center_y + 3), 2)
         pygame.draw.polygon(surface, (255, 225, 100), [(center_x + 8, center_y), (center_x + 12, center_y + 3), (center_x + 8, center_y + 6)])
     elif achievement_id == "wave_six":
-        pygame.draw.polygon(surface, (90, 165, 240), [(center_x - 10, center_y - 12), (center_x - 3, center_y - 8), (center_x - 6, center_y + 3), (center_x - 11, center_y - 2)])
-        pygame.draw.polygon(surface, (90, 165, 240), [(center_x + 10, center_y - 12), (center_x + 3, center_y - 8), (center_x + 6, center_y + 3), (center_x + 11, center_y - 2)])
+        ribbon_wave = round(math.sin(elapsed_seconds * 3.5) * 3)
+        pygame.draw.polygon(surface, (90, 165, 240), [(center_x - 10, center_y - 12 + ribbon_wave), (center_x - 3, center_y - 8), (center_x - 6, center_y + 3), (center_x - 11, center_y - 2 + ribbon_wave)])
+        pygame.draw.polygon(surface, (90, 165, 240), [(center_x + 10, center_y - 12 - ribbon_wave), (center_x + 3, center_y - 8), (center_x + 6, center_y + 3), (center_x + 11, center_y - 2 - ribbon_wave)])
         pygame.draw.circle(surface, (255, 205, 70), center, 10)
         pygame.draw.circle(surface, (255, 240, 170), center, 7, 2)
         number = FONT.render("6", True, (90, 65, 30))
@@ -2847,32 +3007,39 @@ def draw_achievement_icon(surface, achievement_id, center):
     elif achievement_id == "spiral_map":
         points = []
         for step in range(48):
-            angle = step * math.tau / 24
+            angle = step * math.tau / 24 + elapsed_seconds * 1.5
             radius = 1 + step * 0.25
             points.append((round(center_x + math.cos(angle) * radius), round(center_y + math.sin(angle) * radius)))
         pygame.draw.lines(surface, (100, 225, 145), False, points, 3)
         pygame.draw.circle(surface, (245, 220, 115), points[-1], 3)
     elif achievement_id == "first_costume":
-        pygame.draw.polygon(surface, (110, 190, 245), [(center_x - 8, center_y - 8), (center_x - 14, center_y - 2), (center_x - 10, center_y + 3), (center_x - 7, center_y + 1), (center_x - 7, center_y + 13), (center_x + 7, center_y + 13), (center_x + 7, center_y + 1), (center_x + 10, center_y + 3), (center_x + 14, center_y - 2), (center_x + 8, center_y - 8)])
-        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y - 3), 2)
-        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4), 2)
+        fabric_wave = round(math.sin(elapsed_seconds * 4.0) * 2)
+        pygame.draw.polygon(surface, (110, 190, 245), [(center_x - 8, center_y - 8), (center_x - 14, center_y - 2), (center_x - 10, center_y + 3), (center_x - 7, center_y + 1), (center_x - 7, center_y + 13), (center_x + 7, center_y + 13), (center_x + 7, center_y + 1), (center_x + 10, center_y + 3), (center_x + 14, center_y - 2), (center_x + 8, center_y - 8 + fabric_wave)])
+        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y - 3 + fabric_wave), 2)
+        pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4 + fabric_wave), 2)
 
 
-def draw_achievement_popups(surface):
+def draw_achievement_icon(surface, achievement_id, center, elapsed_seconds=0.0):
+    icon_surface = pygame.Surface((40, 40), pygame.SRCALPHA)
+    draw_achievement_icon_art(icon_surface, achievement_id, (20, 20), elapsed_seconds)
+    surface.blit(icon_surface, icon_surface.get_rect(center=center))
+
+
+def draw_achievement_popups(surface, elapsed_seconds=0.0):
     for index, popup in enumerate(ACHIEVEMENT_POPUPS):
         achievement_id = popup["achievement_id"]
         info = ACHIEVEMENTS[achievement_id]
         rect = pygame.Rect(WIDTH - 310, HEIGHT - 76 - index * 64, 290, 58)
         pygame.draw.rect(surface, (27, 36, 43), rect, border_radius=6)
         pygame.draw.rect(surface, (245, 200, 95), rect, 2, border_radius=6)
-        draw_achievement_icon(surface, achievement_id, (rect.x + 27, rect.centery))
+        draw_achievement_icon(surface, achievement_id, (rect.x + 27, rect.centery), elapsed_seconds)
         heading = FONT.render("Achievement unlocked!", True, (255, 220, 130))
         name = FONT.render(info["name"], True, (255, 255, 255))
         surface.blit(heading, (rect.x + 54, rect.y + 5))
         surface.blit(name, (rect.x + 54, rect.y + 29))
 
 
-def draw_achievements_window(surface, achievements):
+def draw_achievements_window(surface, achievements, elapsed_seconds=0.0):
     surface.fill((18, 24, 36))
     title = FONT.render("Achievements", True, (255, 225, 145))
     surface.blit(title, (32, 24))
@@ -2887,7 +3054,7 @@ def draw_achievements_window(surface, achievements):
         name = FONT.render(info["name"], True, (255, 255, 255))
         description = FONT.render(info["description"], True, (205, 215, 225))
         if unlocked:
-            draw_achievement_icon(surface, achievement_id, (rect.x + 26, rect.centery))
+            draw_achievement_icon(surface, achievement_id, (rect.x + 26, rect.centery), elapsed_seconds)
         surface.blit(name, (rect.x + 58, rect.y + 1))
         surface.blit(description, (rect.x + 58, rect.y + 20))
         status = FONT.render("Unlocked" if unlocked else "Locked", True, (185, 245, 195) if unlocked else (165, 175, 190))
@@ -2899,13 +3066,14 @@ def run_achievements_window():
     pygame.display.set_caption("Achievements")
     clock = pygame.time.Clock()
     running = True
+    elapsed_seconds = 0.0
     while running:
+        elapsed_seconds += clock.tick(FPS) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
-        draw_achievements_window(surface, load_achievements())
+        draw_achievements_window(surface, load_achievements(), elapsed_seconds)
         pygame.display.flip()
-        clock.tick(FPS)
     pygame.quit()
 
 
@@ -2942,12 +3110,18 @@ def draw_bestiary_button(surface):
     )
 
 
-def draw_bestiary_window(surface):
+def bestiary_scroll_limit(surface_height):
+    content_bottom = 92 + (len(BESTIARY) - 1) * 90 + 76
+    return max(0, content_bottom - (surface_height - 14))
+
+
+def draw_bestiary_window(surface, scroll_offset=0):
     surface.fill((18, 24, 36))
     title = FONT.render("Bestiary", True, (255, 225, 145))
     surface.blit(title, (32, 24))
     subtitle = FONT.render("Enemy intel", True, (190, 210, 225))
     surface.blit(subtitle, (32, 58))
+    scroll_offset = max(0, min(int(scroll_offset), bestiary_scroll_limit(surface.get_height())))
 
     def wrap_text(message, max_chars):
         words = message.split()
@@ -2965,8 +3139,11 @@ def draw_bestiary_window(surface):
         return lines or [message]
 
     enemy_kills = load_enemy_kills()
+    viewport = pygame.Rect(20, 88, surface.get_width() - 40, surface.get_height() - 102)
+    previous_clip = surface.get_clip()
+    surface.set_clip(viewport)
     for index, (enemy_id, info) in enumerate(BESTIARY.items()):
-        rect = pygame.Rect(32, 92 + index * 90, 536, 76)
+        rect = pygame.Rect(32, 92 + index * 90 - scroll_offset, 536, 76)
         pygame.draw.rect(surface, (48, 58, 72), rect, border_radius=5)
         pygame.draw.rect(surface, (145, 185, 160), rect, 1, border_radius=5)
         center_x = rect.x + 28
@@ -2981,9 +3158,36 @@ def draw_bestiary_window(surface):
         elif enemy_id == "shooter":
             pygame.draw.polygon(surface, (105, 55, 35), [(center_x - 14, center_y - 8), (center_x - 8, center_y - 17), (center_x, center_y - 12), (center_x + 8, center_y - 17), (center_x + 14, center_y - 8), (center_x + 11, center_y + 12), (center_x, center_y + 18), (center_x - 11, center_y + 12)])
             pygame.draw.circle(surface, (190, 105, 55), (center_x, center_y), 12)
+        elif enemy_id == "lightning":
+            pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
+            pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
+        elif enemy_id == "shielder":
+            pygame.draw.circle(surface, (110, 150, 210), (center_x, center_y), 12)
+            pygame.draw.circle(surface, (130, 180, 255), (center_x, center_y), 18, 2)
+            pygame.draw.rect(surface, (120, 180, 255), (center_x + 12, center_y - 4, 12, 8), border_radius=2)
+            pygame.draw.rect(surface, (200, 230, 255), (center_x + 15, center_y - 2, 6, 4), border_radius=1)
+        elif enemy_id == "ghost":
+            pygame.draw.circle(surface, (220, 230, 255), (center_x, center_y), 12)
+            pygame.draw.circle(surface, (150, 170, 210), (center_x, center_y), 8)
+            pygame.draw.polygon(surface, (220, 230, 255), [(center_x - 9, center_y + 10), (center_x - 2, center_y + 18), (center_x + 5, center_y + 10), (center_x + 11, center_y + 18), (center_x + 3, center_y + 23), (center_x - 5, center_y + 23)])
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
+
+        face_colors = {
+            "ground": (255, 235, 120),
+            "flyer": (255, 245, 150),
+            "shooter": (255, 220, 100),
+            "lightning": (255, 255, 255),
+            "shielder": (230, 245, 255),
+            "ghost": (240, 255, 255),
+        }
+        face_color = face_colors.get(enemy_id, (255, 235, 120))
+        pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
+        pygame.draw.circle(surface, face_color, (center_x + 5, center_y - 3), 3)
+        pygame.draw.circle(surface, (35, 25, 25), (center_x - 5, center_y - 3), 1)
+        pygame.draw.circle(surface, (35, 25, 25), (center_x + 5, center_y - 3), 1)
+        pygame.draw.arc(surface, (45, 20, 20), (center_x - 7, center_y + 1, 14, 9), 0.2, math.pi - 0.2, 2)
 
         name = FONT.render(info["name"], True, (255, 255, 255))
         speed = FONT.render(f"Speed: {info['speed']}", True, (205, 215, 225))
@@ -2995,6 +3199,18 @@ def draw_bestiary_window(surface):
             surface.blit(notes, (rect.x + 54, rect.y + 48 + offset * 14))
         kill_count = FONT.render(f"Killed: {enemy_kills.get(enemy_id, 0)}", True, (255, 220, 120))
         surface.blit(kill_count, (rect.right - kill_count.get_width() - 12, rect.y + 12))
+    surface.set_clip(previous_clip)
+
+    max_scroll = bestiary_scroll_limit(surface.get_height())
+    if max_scroll > 0:
+        track = pygame.Rect(surface.get_width() - 14, viewport.top, 4, viewport.height)
+        content_height = 92 + (len(BESTIARY) - 1) * 90 + 76 - 92
+        thumb_height = max(24, int(track.height * viewport.height / content_height))
+        thumb_travel = track.height - thumb_height
+        thumb_y = track.top + int(thumb_travel * scroll_offset / max_scroll)
+        pygame.draw.rect(surface, (65, 78, 91), track, border_radius=2)
+        pygame.draw.rect(surface, (170, 205, 180), (track.x, thumb_y, track.width, thumb_height), border_radius=2)
+    return scroll_offset
 
 
 def run_bestiary_window():
@@ -3002,11 +3218,15 @@ def run_bestiary_window():
     pygame.display.set_caption("Bestiary")
     clock = pygame.time.Clock()
     running = True
+    scroll_offset = 0
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
-        draw_bestiary_window(surface)
+            elif event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * 45
+                scroll_offset = max(0, min(scroll_offset, bestiary_scroll_limit(surface.get_height())))
+        scroll_offset = draw_bestiary_window(surface, scroll_offset)
         pygame.display.flip()
         clock.tick(FPS)
     pygame.quit()
@@ -3306,9 +3526,11 @@ def main():
     menu_costume_buttons = {}
     achievements_process = None
     achievement_check_timer = 0.0
+    achievement_animation_time = 0.0
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
+        achievement_animation_time += dt
         achievement_check_timer = update_achievement_check_timer(achievement_check_timer, dt, game)
         update_achievement_popups(dt)
         if in_menu:
@@ -3445,6 +3667,9 @@ def main():
                     elif event.key == pygame.K_b:
                         if game.is_tower_unlocked("gunner"):
                             game.selected_tower = "gunner"
+                    elif event.key == pygame.K_c:
+                        if game.is_tower_unlocked("cactus"):
+                            game.selected_tower = "cactus"
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if in_menu:
                     if show_backstory:
@@ -3673,7 +3898,7 @@ def main():
             game.update(dt)
             game.draw(SCREEN)
 
-        draw_achievement_popups(SCREEN)
+        draw_achievement_popups(SCREEN, achievement_animation_time)
         pygame.display.flip()
 
     pygame.quit()
