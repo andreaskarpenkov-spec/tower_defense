@@ -104,8 +104,19 @@ class SandboxModeTest(unittest.TestCase):
         self.assertNotEqual(loop.background_color, spiral.background_color)
         self.assertEqual(classic.map_name, "Classic")
 
-    def test_game_has_seven_waves(self):
-        self.assertEqual(len(WAVES), 7)
+    def test_game_has_eight_waves(self):
+        self.assertEqual(len(WAVES), 8)
+
+    def test_wave_eight_has_many_flyer_enemies(self):
+        game = Game(MAPS["Classic"])
+        game.wave_index = 7
+
+        for _ in range(20):
+            game.spawn_enemy()
+
+        flyer_count = sum(enemy.type == "flyer" for enemy in game.enemies)
+        self.assertEqual(flyer_count, 10)
+        self.assertEqual(WAVES[7]["count"], 30)
 
     def test_lightning_enemy_first_appears_in_wave_six_at_three_times_speed(self):
         game = Game(MAPS["Classic"])
@@ -286,7 +297,7 @@ class SandboxModeTest(unittest.TestCase):
             try:
                 main.ACHIEVEMENT_POPUPS.clear()
                 earned = main.check_achievements()
-                self.assertEqual(earned, set(main.ACHIEVEMENTS))
+                self.assertEqual(earned, set(main.ACHIEVEMENTS) - {"slaver"})
                 self.assertEqual(main.load_achievements(), earned)
                 queued_ids = {popup["achievement_id"] for popup in main.ACHIEVEMENT_POPUPS}
                 self.assertIn("first_wave", queued_ids)
@@ -328,6 +339,31 @@ class SandboxModeTest(unittest.TestCase):
                     finally:
                         main.SAVE_FILE = original_save_file
                 finally:
+                    if os.path.exists(save_path):
+                        os.remove(save_path)
+
+    def test_slaver_requires_campaign_win_with_only_one_placed_tower_type(self):
+        for tower_types, expected_unlock in ((["basic"], True), (["basic", "rapid"], False)):
+            with self.subTest(tower_types=tower_types):
+                with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+                    json.dump({"unlocked_towers": ["basic", "rapid"], "win_coins": 0}, save_file)
+                    save_path = save_file.name
+
+                original_save_file = main.SAVE_FILE
+                main.SAVE_FILE = save_path
+                try:
+                    game = Game(MAPS["Classic"])
+                    game.money = 1000
+                    for tower_index, tower_type in enumerate(tower_types):
+                        game.selected_tower = tower_type
+                        game.place_tower((100 + tower_index * 100, 100))
+
+                    game.wave_index = len(WAVES)
+                    game.update(0)
+
+                    self.assertEqual("slaver" in main.load_achievements(), expected_unlock)
+                finally:
+                    main.SAVE_FILE = original_save_file
                     if os.path.exists(save_path):
                         os.remove(save_path)
 
@@ -722,10 +758,23 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(game.highest_cleared_wave, 0)
         self.assertFalse(game.wave_six_cleared)
         self.assertEqual(game.unlocked_towers, {"basic"})
-
         game.lives = 0
         game.update(0.016)
         self.assertFalse(game.game_over)
+
+    def test_tower_directory_lists_every_tower_and_hides_secret_lock_state(self):
+        entries = main.get_tower_directory_entries({"basic"}, 0, 0)
+
+        self.assertEqual(len(entries), 13)
+        self.assertEqual(entries[0]["shortcut"], "1")
+        self.assertEqual(entries[0]["name"], "Basic")
+        cactus = next(entry for entry in entries if entry["tower_id"] == "cactus")
+        self.assertFalse(cactus["unlocked"])
+        self.assertIn("walker", cactus["unlock_hint"].lower())
+        self.assertTrue(
+            next(entry for entry in main.get_tower_directory_entries(set(), 0, 0, sandbox=True)
+                 if entry["tower_id"] == "cactus")["unlocked"]
+        )
 
     def test_sandbox_mode_does_not_update_saved_win_coins(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

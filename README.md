@@ -23,9 +23,13 @@ On Windows, use `py main.py` if `python3` is not available.
 - Left-click to place a tower.
 - Press `R` to restart after game over.
 - unlock new towers
-- can you get the secret tower?
-- Can you get sickman stickman to come to your screen?
+- can you get the secret towers?
+- Can you get sickman-stickman to come to your screen?
 
 ## Goal
 
 Stop enemies from reaching the end of the path using towers placed along the route.
+
+## message
+
+Sickman-stickman here, wishing you a fun game!

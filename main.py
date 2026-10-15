@@ -141,6 +141,21 @@ TOWER_UNLOCK_WAVES = {
     "gunner": 6,
     "mine": 2,
 }
+TOWER_DIRECTORY_SHORTCUTS = (
+    ("1", "basic"),
+    ("2", "rapid"),
+    ("3", "sniper"),
+    ("4", "mine"),
+    ("5", "freeze"),
+    ("6", "boinger"),
+    ("7", "walker"),
+    ("8", "mine_tower"),
+    ("9", "warden"),
+    ("0", "nova"),
+    ("A", "spawner"),
+    ("B", "gunner"),
+    ("C", "cactus"),
+)
 
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 MAP_UNLOCK_COST = 20
@@ -186,6 +201,7 @@ ACHIEVEMENTS = {
     "bullet_time": {"name": "Bullet-Time Tactician", "description": "Clear wave 4 without losing a life"},
     "matrix_dodge": {"name": "Matrix Dodge", "description": "Make a flyer evade a tower"},
     "exit_construct": {"name": "Exit the Construct", "description": "Win the campaign"},
+    "slaver": {"name": "Slaver", "description": "Win the campaign using only one type of tower"},
 }
 BESTIARY = {
     "ground": {"name": "Ground", "speed": "standard", "notes": "The basic enemy that marches down the path."},
@@ -257,6 +273,54 @@ def load_progress():
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
     return {"basic"}, 0
+
+
+def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins, sandbox=False):
+    entries = []
+    unlocked_towers = set(unlocked_towers)
+    for shortcut, tower_id in TOWER_DIRECTORY_SHORTCUTS:
+        if tower_id == "mine":
+            name = "Mine"
+            details = f"Blast damage {MINE_DAMAGE} | Cost ${MINE_COST}"
+            unlocked = sandbox or tower_id in unlocked_towers or highest_cleared_wave >= TOWER_UNLOCK_WAVES[tower_id]
+            unlock_hint = f"Unlock: wave {TOWER_UNLOCK_WAVES[tower_id]}"
+        elif tower_id == "walker":
+            name = "Walker"
+            details = f"Contact damage {WALKER_DAMAGE} | Cost ${WALKER_COST}"
+            unlocked = sandbox or tower_id in unlocked_towers or highest_cleared_wave >= TOWER_UNLOCK_WAVES[tower_id]
+            unlock_hint = f"Unlock: wave {TOWER_UNLOCK_WAVES[tower_id]}"
+        else:
+            info = TOWER_TYPES[tower_id]
+            name = info["name"]
+            if tower_id == "cactus":
+                details = f"Contact damage {info['damage']} | Cost ${info['cost']}"
+                unlocked = sandbox or tower_id in unlocked_towers
+                unlock_hint = "Secret: send a Walker over a Freeze tower"
+            elif "win_cost" in info:
+                details = f"Damage {info['damage']} | Cost {info['win_cost']} win coins"
+                unlocked = sandbox or win_coins >= info["win_cost"]
+                unlock_hint = f"Need {info['win_cost']} win coins"
+            else:
+                details = f"Range {info['range']} | Damage {info['damage']} | Cost ${info['cost']}"
+                wave_required = TOWER_UNLOCK_WAVES.get(tower_id)
+                unlocked = sandbox or tower_id in unlocked_towers or (
+                    wave_required is not None and highest_cleared_wave >= wave_required
+                )
+                if tower_id == "mine_tower":
+                    unlock_hint = "Secret: arrange towers around a mine"
+                elif wave_required is not None:
+                    unlock_hint = f"Unlock: wave {wave_required}"
+                else:
+                    unlock_hint = "Unlocked"
+        entries.append({
+            "tower_id": tower_id,
+            "shortcut": shortcut,
+            "name": name,
+            "details": details,
+            "unlocked": unlocked,
+            "unlock_hint": "Available" if unlocked else unlock_hint,
+        })
+    return entries
 
 
 def load_developer_mode_state():
@@ -528,6 +592,8 @@ def check_achievements(game=None):
         award_achievement(achievements, "code_rain")
     if game is not None and not game.sandbox and game.victory:
         award_achievement(achievements, "exit_construct")
+        if len(game.used_tower_types) == 1:
+            award_achievement(achievements, "slaver")
     if "Spiral" in load_unlocked_maps():
         award_achievement(achievements, "spiral_map")
     if (
@@ -654,6 +720,7 @@ WAVES = [
     {"count": 15, "speed": 8.5, "hp": 520, "reward": 42},
     {"count": 18, "speed": 9.5, "hp": 650, "reward": 50},
     {"count": 22, "speed": 10.5, "hp": 780, "reward": 60},
+    {"count": 30, "speed": 11.5, "hp": 900, "reward": 70},
 ]
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -1658,6 +1725,7 @@ class Game:
         self.game_over = False
         self.victory = False
         self.selected_tower = "basic"
+        self.used_tower_types = set()
         self.walkers = []
         self.key_buffer = ""
         self.dragged_enemy = None
@@ -1763,6 +1831,11 @@ class Game:
             self.wave_six_cleared = True
             self.unlock_achievement("wave_six")
         self._apply_unlocks_from_progress()
+        save_unlocks(
+            self.unlocked_towers,
+            self.win_coins,
+            highest_cleared_wave=self.highest_cleared_wave,
+        )
 
     def unlock_mine_tower_if_ready(self):
         if self.is_tower_unlocked("mine_tower"):
@@ -1772,6 +1845,11 @@ class Game:
             below = any(tower.x == mine.x and tower.y == mine.y + GRID_SIZE for tower in self.towers)
             if above and below:
                 self.unlocked_towers.add("mine_tower")
+                save_unlocks(
+                    self.unlocked_towers,
+                    self.win_coins,
+                    highest_cleared_wave=self.highest_cleared_wave,
+                )
                 return
 
     def unlock_cactus_from_walker(self, walker, previous_position):
@@ -2401,7 +2479,9 @@ class Game:
     def spawn_enemy(self):
         wave = WAVES[self.wave_index]
         enemy_type = "ground"
-        if self.wave_index >= 6 and (self.spawned == 0 or (self.spawned + 1) % 5 == 0):
+        if self.wave_index >= 7 and (self.spawned + 1) % 2 == 0:
+            enemy_type = "flyer"
+        elif self.wave_index >= 6 and (self.spawned == 0 or (self.spawned + 1) % 5 == 0):
             enemy_type = "ghost"
         elif self.wave_index >= 5 and (self.spawned + 1) % 6 == 0:
             enemy_type = "shielder"
@@ -2564,6 +2644,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.mines.append(Mine(grid_x, grid_y))
+            self.used_tower_types.add("mine")
             self.record_tower_placement()
             self.money -= MINE_COST
             return
@@ -2575,6 +2656,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
+            self.used_tower_types.add("walker")
             self.record_tower_placement()
             self.money -= WALKER_COST
             return
@@ -2587,6 +2669,7 @@ class Game:
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, "gunner", self.path_points))
+            self.used_tower_types.add("gunner")
             self.record_tower_placement()
             self.money -= gunner_cost
             return
@@ -2598,6 +2681,7 @@ class Game:
             if not self.can_place(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
+            self.used_tower_types.add(self.selected_tower)
             self.record_tower_placement()
             self.win_coins -= TOWER_TYPES[self.selected_tower]["win_cost"]
             if self.selected_tower == "basic":
@@ -2615,6 +2699,7 @@ class Game:
         if self.money < tower_info["cost"]:
             return
         self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
+        self.used_tower_types.add(self.selected_tower)
         self.record_tower_placement()
         self.money -= tower_info["cost"]
         if self.selected_tower == "basic":
@@ -2844,36 +2929,20 @@ class Game:
                 selected_label = "Hidden" if not self.is_tower_unlocked(self.selected_tower) else f"{tower_info['name']} (${tower_info['cost']})"
         else:
             selected_label = "Unknown"
-        rapid_label = "Rapid" if self.is_tower_unlocked("rapid") else "Hidden"
-        sniper_label = "Sniper" if self.is_tower_unlocked("sniper") else "Hidden"
-        mine_label = "Mine" if self.is_tower_unlocked("mine") else "Hidden"
-        freeze_label = "Freeze" if self.is_tower_unlocked("freeze") else "Hidden"
-        boinger_label = "Boinger" if self.is_tower_unlocked("boinger") else "Hidden"
-        walker_label = "Walker" if self.is_tower_unlocked("walker") else "Hidden"
-        gunner_label = "Runny Pew-Pew" if self.is_tower_unlocked("gunner") else "Hidden"
-        mine_tower_label = "Mine Tower" if self.is_tower_unlocked("mine_tower") else "Hidden"
-        warden_label = "Warden"
-        nova_label = "Nova"
-        spawner_label = "Spawner"
         status = [
             f"Money: {self.money}",
             f"Win coins: {self.win_coins}{' (sandbox run)' if self.sandbox else ''}",
             f"Lives: {self.lives}",
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
+            "Tower directory: press T",
             "Sandbox mode" if self.sandbox else "Basic unlocked. New towers unlock by wave.",
             "Enemies paused (Space to resume)" if self.enemies_paused else "Enemies running (Space to pause)" if self.developer_mode else "",
             "Arrow keys move enemies" if self.developer_mode else "",
             "Drag enemies with mouse" if self.developer_mode else "",
             "Click dev buttons to spawn" if self.developer_mode else "",
-            f"Press 1=Basic 2={rapid_label} 3={sniper_label}",
-            f"Press 4={mine_label} 5={freeze_label} 6={boinger_label} 7={walker_label}",
-            f"Press 8={mine_tower_label} 9={warden_label} 0={nova_label}",
-            f"Press A={spawner_label} B={gunner_label}",
             "Click tower to upgrade (+$80)",
         ]
-        if self.is_tower_unlocked("cactus"):
-            status.append(f"Press C=Cactus (${TOWER_TYPES['cactus']['cost']})")
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
@@ -3017,6 +3086,16 @@ def draw_achievement_icon_art(surface, achievement_id, center, elapsed_seconds):
         pygame.draw.polygon(surface, (110, 190, 245), [(center_x - 8, center_y - 8), (center_x - 14, center_y - 2), (center_x - 10, center_y + 3), (center_x - 7, center_y + 1), (center_x - 7, center_y + 13), (center_x + 7, center_y + 13), (center_x + 7, center_y + 1), (center_x + 10, center_y + 3), (center_x + 14, center_y - 2), (center_x + 8, center_y - 8 + fabric_wave)])
         pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y - 3 + fabric_wave), 2)
         pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4 + fabric_wave), 2)
+    elif achievement_id == "slaver":
+        barrel_angle = math.sin(elapsed_seconds * 2.2) * 0.8
+        pygame.draw.rect(surface, (90, 115, 90), (center_x - 9, center_y - 3, 18, 16), border_radius=3)
+        pygame.draw.rect(surface, (155, 190, 125), (center_x - 7, center_y - 1, 14, 12), border_radius=2)
+        barrel_end = (
+            center_x + round(math.cos(barrel_angle) * 14),
+            center_y - 5 + round(math.sin(barrel_angle) * 14),
+        )
+        pygame.draw.line(surface, (230, 235, 195), (center_x, center_y - 5), barrel_end, 4)
+        pygame.draw.circle(surface, (255, 220, 110), barrel_end, 3)
 
 
 def draw_achievement_icon(surface, achievement_id, center, elapsed_seconds=0.0):
@@ -3082,6 +3161,66 @@ def open_achievements_window():
         [sys.executable, os.path.abspath(__file__), "--achievements"],
         cwd=os.path.dirname(os.path.abspath(__file__)),
     )
+
+
+def draw_tower_directory_window(surface, entries):
+    surface.fill((18, 24, 36))
+    title = FONT.render("Tower Directory", True, (255, 225, 145))
+    surface.blit(title, (28, 20))
+    subtitle = FONT.render("Select a tower in-game with its listed key", True, (190, 210, 225))
+    surface.blit(subtitle, (28, 50))
+
+    for index, entry in enumerate(entries):
+        rect = pygame.Rect(20, 82 + index * 45, 720, 41)
+        unlocked = entry["unlocked"]
+        pygame.draw.rect(surface, (48, 70, 60) if unlocked else (48, 58, 72), rect, border_radius=5)
+        pygame.draw.rect(surface, (110, 170, 125) if unlocked else (105, 120, 140), rect, 1, border_radius=5)
+        shortcut_rect = pygame.Rect(rect.x + 8, rect.y + 6, 36, 29)
+        pygame.draw.rect(surface, (90, 125, 90) if unlocked else (68, 76, 88), shortcut_rect, border_radius=4)
+        shortcut = FONT.render(entry["shortcut"], True, (255, 255, 255))
+        surface.blit(shortcut, shortcut.get_rect(center=shortcut_rect.center))
+
+        name = FONT.render(entry["name"], True, (245, 247, 250))
+        details = FONT.render(entry["details"], True, (195, 208, 220))
+        state_color = (155, 235, 170) if unlocked else (235, 190, 120)
+        state = FONT.render(entry["unlock_hint"], True, state_color)
+        surface.blit(name, (rect.x + 56, rect.y + 3))
+        surface.blit(details, (rect.x + 210, rect.y + 12))
+        surface.blit(state, (rect.right - state.get_width() - 12, rect.y + 12))
+
+
+def run_tower_directory_window(sandbox=False):
+    surface = pygame.display.set_mode((760, 680))
+    pygame.display.set_caption("Tower Directory")
+    clock = pygame.time.Clock()
+    running = True
+    refresh_timer = 0.0
+    entries = []
+    while running:
+        dt = clock.tick(FPS) / 1000.0
+        refresh_timer += dt
+        if refresh_timer >= 0.5 or not entries:
+            unlocked_towers, win_coins = load_progress()
+            entries = get_tower_directory_entries(
+                unlocked_towers,
+                load_highest_cleared_wave(),
+                win_coins,
+                sandbox=sandbox,
+            )
+            refresh_timer = 0.0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+        draw_tower_directory_window(surface, entries)
+        pygame.display.flip()
+    pygame.quit()
+
+
+def open_tower_directory_window(sandbox=False):
+    command = [sys.executable, os.path.abspath(__file__), "--towers"]
+    if sandbox:
+        command.append("--tower-sandbox")
+    return subprocess.Popen(command, cwd=os.path.dirname(os.path.abspath(__file__)))
 
 
 def draw_achievements_button(surface):
@@ -3303,6 +3442,7 @@ def draw_map_selection(
         "Walker: wave 6",
         "Runny Pew-Pew: wave 6",
         "  Mine Tower: ???",
+        "   cactus: ???"
 
     ]
     for index, rule in enumerate(unlock_rules):
@@ -3525,6 +3665,7 @@ def main():
     running = True
     menu_costume_buttons = {}
     achievements_process = None
+    tower_directory_process = None
     achievement_check_timer = 0.0
     achievement_animation_time = 0.0
 
@@ -3597,6 +3738,8 @@ def main():
                     if event.key == pygame.K_RETURN:
                         game = Game(MAPS[selected_map], sandbox=sandbox_mode, map_name=selected_map)
                         in_menu = False
+                        if tower_directory_process is None or tower_directory_process.poll() is not None:
+                            tower_directory_process = open_tower_directory_window(game.sandbox)
                     elif event.key == pygame.K_s:
                         sandbox_mode = not sandbox_mode
                     elif event.key == pygame.K_1:
@@ -3670,6 +3813,9 @@ def main():
                     elif event.key == pygame.K_c:
                         if game.is_tower_unlocked("cactus"):
                             game.selected_tower = "cactus"
+                    elif event.key == pygame.K_t:
+                        if tower_directory_process is None or tower_directory_process.poll() is not None:
+                            tower_directory_process = open_tower_directory_window(game.sandbox)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if in_menu:
                     if show_backstory:
@@ -3901,6 +4047,8 @@ def main():
         draw_achievement_popups(SCREEN, achievement_animation_time)
         pygame.display.flip()
 
+    if tower_directory_process is not None and tower_directory_process.poll() is None:
+        tower_directory_process.terminate()
     pygame.quit()
     sys.exit()
 
@@ -3910,5 +4058,7 @@ if __name__ == "__main__":
         run_achievements_window()
     elif "--bestiary" in sys.argv:
         run_bestiary_window()
+    elif "--towers" in sys.argv:
+        run_tower_directory_window(sandbox="--tower-sandbox" in sys.argv)
     else:
         main()
