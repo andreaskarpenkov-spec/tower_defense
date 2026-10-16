@@ -297,7 +297,7 @@ class SandboxModeTest(unittest.TestCase):
             try:
                 main.ACHIEVEMENT_POPUPS.clear()
                 earned = main.check_achievements()
-                self.assertEqual(earned, set(main.ACHIEVEMENTS) - {"slaver"})
+                self.assertEqual(earned, set(main.ACHIEVEMENTS) - {"slaver", "poor_choice"})
                 self.assertEqual(main.load_achievements(), earned)
                 queued_ids = {popup["achievement_id"] for popup in main.ACHIEVEMENT_POPUPS}
                 self.assertIn("first_wave", queued_ids)
@@ -362,6 +362,33 @@ class SandboxModeTest(unittest.TestCase):
                     game.update(0)
 
                     self.assertEqual("slaver" in main.load_achievements(), expected_unlock)
+                finally:
+                    main.SAVE_FILE = original_save_file
+                    if os.path.exists(save_path):
+                        os.remove(save_path)
+
+    def test_poor_choice_requires_winning_without_any_tower_upgrades(self):
+        for upgrade_method, expected_unlock in ((None, True), ("single", False), ("all", False)):
+            with self.subTest(upgrade_method=upgrade_method):
+                with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+                    json.dump({"unlocked_towers": ["basic"], "win_coins": 0}, save_file)
+                    save_path = save_file.name
+
+                original_save_file = main.SAVE_FILE
+                main.SAVE_FILE = save_path
+                try:
+                    game = Game(MAPS["Classic"])
+                    game.money = 1000
+                    game.place_tower((120, 120))
+                    if upgrade_method == "single":
+                        self.assertTrue(game.upgrade_tower((120, 120)))
+                    elif upgrade_method == "all":
+                        game.upgrade_all_towers()
+
+                    game.wave_index = len(WAVES)
+                    game.update(0)
+
+                    self.assertEqual("poor_choice" in main.load_achievements(), expected_unlock)
                 finally:
                     main.SAVE_FILE = original_save_file
                     if os.path.exists(save_path):
@@ -454,6 +481,28 @@ class SandboxModeTest(unittest.TestCase):
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--achievements")
         self.assertEqual(command[0], main.sys.executable)
+
+    def test_achievements_scroll_reaches_last_entry(self):
+        surface = pygame.Surface((600, 560))
+
+        scroll_offset = main.draw_achievements_window(surface, set(main.ACHIEVEMENTS), scroll_offset=1000)
+
+        self.assertEqual(scroll_offset, main.achievements_scroll_limit(560))
+        self.assertGreater(scroll_offset, 0)
+
+    def test_wiki_window_scrolls_and_launches_separately(self):
+        surface = pygame.Surface((760, 680))
+
+        scroll_offset = main.draw_wiki_window(surface, 1000)
+
+        self.assertEqual(scroll_offset, main.wiki_scroll_limit(680))
+        self.assertGreater(scroll_offset, 0)
+
+        with patch("main.subprocess.Popen") as popen:
+            main.open_wiki_window()
+
+        command = popen.call_args.args[0]
+        self.assertEqual(command[-1], "--wiki")
 
     def test_every_achievement_icon_animates_over_time(self):
         for achievement_id in main.ACHIEVEMENTS:
@@ -770,7 +819,12 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(entries[0]["name"], "Basic")
         cactus = next(entry for entry in entries if entry["tower_id"] == "cactus")
         self.assertFalse(cactus["unlocked"])
-        self.assertIn("walker", cactus["unlock_hint"].lower())
+        self.assertEqual(cactus["unlock_hint"], "Secret tower")
+        mine_tower = next(entry for entry in entries if entry["tower_id"] == "mine_tower")
+        self.assertEqual(mine_tower["unlock_hint"], "Secret tower")
+        wiki_text = " ".join(text for text, _ in main.get_wiki_rows())
+        self.assertNotIn("Walker over a Freeze tower", wiki_text)
+        self.assertNotIn("arrange towers around a mine", wiki_text)
         self.assertTrue(
             next(entry for entry in main.get_tower_directory_entries(set(), 0, 0, sandbox=True)
                  if entry["tower_id"] == "cactus")["unlocked"]

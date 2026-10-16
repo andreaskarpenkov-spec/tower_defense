@@ -202,6 +202,7 @@ ACHIEVEMENTS = {
     "matrix_dodge": {"name": "Matrix Dodge", "description": "Make a flyer evade a tower"},
     "exit_construct": {"name": "Exit the Construct", "description": "Win the campaign"},
     "slaver": {"name": "Slaver", "description": "Win the campaign using only one type of tower"},
+    "poor_choice": {"name": "Poor Choice", "description": "Win the campaign without upgrading a tower"},
 }
 BESTIARY = {
     "ground": {"name": "Ground", "speed": "standard", "notes": "The basic enemy that marches down the path."},
@@ -295,7 +296,7 @@ def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins
             if tower_id == "cactus":
                 details = f"Contact damage {info['damage']} | Cost ${info['cost']}"
                 unlocked = sandbox or tower_id in unlocked_towers
-                unlock_hint = "Secret: send a Walker over a Freeze tower"
+                unlock_hint = "Secret tower"
             elif "win_cost" in info:
                 details = f"Damage {info['damage']} | Cost {info['win_cost']} win coins"
                 unlocked = sandbox or win_coins >= info["win_cost"]
@@ -307,7 +308,7 @@ def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins
                     wave_required is not None and highest_cleared_wave >= wave_required
                 )
                 if tower_id == "mine_tower":
-                    unlock_hint = "Secret: arrange towers around a mine"
+                    unlock_hint = "Secret tower"
                 elif wave_required is not None:
                     unlock_hint = f"Unlock: wave {wave_required}"
                 else:
@@ -594,6 +595,8 @@ def check_achievements(game=None):
         award_achievement(achievements, "exit_construct")
         if len(game.used_tower_types) == 1:
             award_achievement(achievements, "slaver")
+        if not game.upgraded_any_tower:
+            award_achievement(achievements, "poor_choice")
     if "Spiral" in load_unlocked_maps():
         award_achievement(achievements, "spiral_map")
     if (
@@ -684,6 +687,8 @@ BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
 BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
+WIKI_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
+WIKI_GAME_BUTTON_RECT = pygame.Rect(20, 570, 86, 34)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
@@ -1726,6 +1731,7 @@ class Game:
         self.victory = False
         self.selected_tower = "basic"
         self.used_tower_types = set()
+        self.upgraded_any_tower = False
         self.walkers = []
         self.key_buffer = ""
         self.dragged_enemy = None
@@ -1883,6 +1889,7 @@ class Game:
                 if self.money < 80:
                     return False
                 tower.shooter_immunity = True
+                self.upgraded_any_tower = True
                 self.money -= 80
                 return True
         return False
@@ -1890,6 +1897,8 @@ class Game:
     def upgrade_all_towers(self):
         for tower in self.towers:
             tower.shooter_immunity = True
+        if self.towers:
+            self.upgraded_any_tower = True
 
     def unlock_achievement(self, achievement_id):
         if not award_achievement(self.achievements, achievement_id):
@@ -2968,6 +2977,7 @@ class Game:
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
 
+        draw_wiki_button(surface, WIKI_GAME_BUTTON_RECT)
         button_color = (70, 130, 190) if self.wave_index + 1 < len(WAVES) else (90, 90, 90)
         border_color = (170, 210, 255) if self.wave_index + 1 < len(WAVES) else (130, 130, 130)
         pygame.draw.rect(surface, button_color, self.wave_button_rect, border_radius=8)
@@ -3087,15 +3097,41 @@ def draw_achievement_icon_art(surface, achievement_id, center, elapsed_seconds):
         pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y - 3 + fabric_wave), 2)
         pygame.draw.circle(surface, (255, 225, 100), (center_x, center_y + 4 + fabric_wave), 2)
     elif achievement_id == "slaver":
-        barrel_angle = math.sin(elapsed_seconds * 2.2) * 0.8
-        pygame.draw.rect(surface, (90, 115, 90), (center_x - 9, center_y - 3, 18, 16), border_radius=3)
-        pygame.draw.rect(surface, (155, 190, 125), (center_x - 7, center_y - 1, 14, 12), border_radius=2)
-        barrel_end = (
-            center_x + round(math.cos(barrel_angle) * 14),
-            center_y - 5 + round(math.sin(barrel_angle) * 14),
-        )
-        pygame.draw.line(surface, (230, 235, 195), (center_x, center_y - 5), barrel_end, 4)
-        pygame.draw.circle(surface, (255, 220, 110), barrel_end, 3)
+        chain_rattle = round(math.sin(elapsed_seconds * 4.0) * 2)
+        pygame.draw.rect(surface, (48, 58, 66), (center_x - 10, center_y + 7, 20, 11))
+        pygame.draw.polygon(surface, (110, 125, 125), [
+            (center_x - 9, center_y + 7),
+            (center_x - 9, center_y - 8),
+            (center_x - 5, center_y - 8),
+            (center_x - 5, center_y - 12),
+            (center_x - 1, center_y - 12),
+            (center_x - 1, center_y - 8),
+            (center_x + 3, center_y - 8),
+            (center_x + 3, center_y - 12),
+            (center_x + 7, center_y - 12),
+            (center_x + 7, center_y - 8),
+            (center_x + 9, center_y - 8),
+            (center_x + 9, center_y + 7),
+        ])
+        pygame.draw.rect(surface, (45, 55, 62), (center_x - 3, center_y - 1, 6, 8))
+        chain_color = (220, 190, 105)
+        for start, end in (
+            ((center_x - 9, center_y - 5), (center_x + 9, center_y + 5 + chain_rattle)),
+            ((center_x + 9, center_y - 5), (center_x - 9, center_y + 5 - chain_rattle)),
+        ):
+            pygame.draw.line(surface, chain_color, start, end, 2)
+            for link_index in range(5):
+                progress = link_index / 4
+                link_x = round(start[0] + (end[0] - start[0]) * progress)
+                link_y = round(start[1] + (end[1] - start[1]) * progress)
+                pygame.draw.circle(surface, (245, 220, 150), (link_x, link_y), 2, 1)
+    elif achievement_id == "poor_choice":
+        slash_sway = round(math.sin(elapsed_seconds * 3.0) * 2)
+        pygame.draw.rect(surface, (90, 115, 90), (center_x - 8, center_y - 2, 16, 15), border_radius=2)
+        pygame.draw.rect(surface, (155, 190, 125), (center_x - 6, center_y, 12, 11), border_radius=2)
+        pygame.draw.line(surface, (110, 235, 150), (center_x, center_y - 12), (center_x, center_y - 4), 3)
+        pygame.draw.polygon(surface, (110, 235, 150), [(center_x - 5, center_y - 8), (center_x, center_y - 14), (center_x + 5, center_y - 8)])
+        pygame.draw.line(surface, (235, 85, 75), (center_x - 13, center_y - 9), (center_x + 13, center_y + 8 + slash_sway), 3)
 
 
 def draw_achievement_icon(surface, achievement_id, center, elapsed_seconds=0.0):
@@ -3118,16 +3154,25 @@ def draw_achievement_popups(surface, elapsed_seconds=0.0):
         surface.blit(name, (rect.x + 54, rect.y + 29))
 
 
-def draw_achievements_window(surface, achievements, elapsed_seconds=0.0):
+def achievements_scroll_limit(surface_height):
+    content_bottom = 92 + (len(ACHIEVEMENTS) - 1) * 45 + 40
+    return max(0, content_bottom - (surface_height - 14))
+
+
+def draw_achievements_window(surface, achievements, elapsed_seconds=0.0, scroll_offset=0):
     surface.fill((18, 24, 36))
     title = FONT.render("Achievements", True, (255, 225, 145))
     surface.blit(title, (32, 24))
     unlocked_count = len(achievements & ACHIEVEMENTS.keys())
     progress = FONT.render(f"Unlocked: {unlocked_count}/{len(ACHIEVEMENTS)}", True, (190, 210, 225))
     surface.blit(progress, (32, 58))
+    scroll_offset = max(0, min(int(scroll_offset), achievements_scroll_limit(surface.get_height())))
+    viewport = pygame.Rect(20, 88, surface.get_width() - 40, surface.get_height() - 102)
+    previous_clip = surface.get_clip()
+    surface.set_clip(viewport)
     for index, (achievement_id, info) in enumerate(ACHIEVEMENTS.items()):
         unlocked = achievement_id in achievements
-        rect = pygame.Rect(32, 92 + index * 45, 536, 40)
+        rect = pygame.Rect(32, 92 + index * 45 - scroll_offset, 536, 40)
         pygame.draw.rect(surface, (57, 105, 77) if unlocked else (48, 58, 72), rect, border_radius=5)
         pygame.draw.rect(surface, (145, 185, 160) if unlocked else (105, 120, 140), rect, 1, border_radius=5)
         name = FONT.render(info["name"], True, (255, 255, 255))
@@ -3138,6 +3183,18 @@ def draw_achievements_window(surface, achievements, elapsed_seconds=0.0):
         surface.blit(description, (rect.x + 58, rect.y + 20))
         status = FONT.render("Unlocked" if unlocked else "Locked", True, (185, 245, 195) if unlocked else (165, 175, 190))
         surface.blit(status, (rect.right - status.get_width() - 12, rect.y + 14))
+    surface.set_clip(previous_clip)
+
+    max_scroll = achievements_scroll_limit(surface.get_height())
+    if max_scroll > 0:
+        track = pygame.Rect(surface.get_width() - 14, viewport.top, 4, viewport.height)
+        content_height = 40 + (len(ACHIEVEMENTS) - 1) * 45
+        thumb_height = max(24, int(track.height * viewport.height / content_height))
+        thumb_travel = track.height - thumb_height
+        thumb_y = track.top + int(thumb_travel * scroll_offset / max_scroll)
+        pygame.draw.rect(surface, (65, 78, 91), track, border_radius=2)
+        pygame.draw.rect(surface, (170, 205, 180), (track.x, thumb_y, track.width, thumb_height), border_radius=2)
+    return scroll_offset
 
 
 def run_achievements_window():
@@ -3146,12 +3203,16 @@ def run_achievements_window():
     clock = pygame.time.Clock()
     running = True
     elapsed_seconds = 0.0
+    scroll_offset = 0
     while running:
         elapsed_seconds += clock.tick(FPS) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
-        draw_achievements_window(surface, load_achievements(), elapsed_seconds)
+            elif event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * 45
+                scroll_offset = max(0, min(scroll_offset, achievements_scroll_limit(surface.get_height())))
+        scroll_offset = draw_achievements_window(surface, load_achievements(), elapsed_seconds, scroll_offset)
         pygame.display.flip()
     pygame.quit()
 
@@ -3247,6 +3308,13 @@ def draw_bestiary_button(surface):
             BESTIARY_BUTTON_RECT.centery - label.get_height() // 2,
         ),
     )
+
+
+def draw_wiki_button(surface, rect=WIKI_BUTTON_RECT):
+    pygame.draw.rect(surface, (78, 108, 112), rect, border_radius=7)
+    pygame.draw.rect(surface, (165, 215, 215), rect, 2, border_radius=7)
+    label = FONT.render("Wiki", True, (255, 255, 255))
+    surface.blit(label, label.get_rect(center=rect.center))
 
 
 def bestiary_scroll_limit(surface_height):
@@ -3374,6 +3442,131 @@ def run_bestiary_window():
 def open_bestiary_window():
     return subprocess.Popen(
         [sys.executable, os.path.abspath(__file__), "--bestiary"],
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+    )
+
+
+def get_wiki_rows(surface_width=760):
+    unlocked_towers, win_coins = load_progress()
+    tower_entries = get_tower_directory_entries(
+        unlocked_towers,
+        load_highest_cleared_wave(),
+        win_coins,
+    )
+    sections = [
+        ("Playing", [
+            "Place towers beside the path, then launch each wave with the Send Wave button.",
+            "Enemies that reach the end cost you a life. Defeat all enemies to clear a wave.",
+            "Click an existing tower to buy its one-time $80 upgrade against Shooter projectiles.",
+            "Press T to reopen the Tower Directory; choose tower types with the listed keys.",
+        ]),
+        ("Towers", [
+            f"{entry['shortcut']}  {entry['name']}: {entry['details']}. {entry['unlock_hint']}."
+            for entry in tower_entries
+        ]),
+        ("Enemies", [
+            f"{info['name']} ({info['speed']}): {info['notes']}"
+            for info in BESTIARY.values()
+        ]),
+        ("Wave guide", [
+            f"Wave {index + 1}: {wave['count']} enemies; standard speed {wave['speed']}."
+            for index, wave in enumerate(WAVES)
+        ]),
+        ("Special notes", [
+            "Wave 6 introduces Lightning enemies at triple speed and Shielder enemies with orbiting projectile-blocking shields.",
+            "Wave 7 introduces Ghost enemies that turn invisible for five seconds; towers cannot target them while hidden.",
+            "Wave 8 sends a large Flyer force: every second enemy in the wave is a Flyer.",
+            "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
+        ]),
+    ]
+    text_width = max(100, surface_width - 76)
+    rows = []
+    for heading, paragraphs in sections:
+        rows.append((heading, True))
+        for paragraph in paragraphs:
+            current = ""
+            for word in paragraph.split():
+                candidate = f"{current} {word}".strip()
+                if current and FONT.size(candidate)[0] > text_width:
+                    rows.append((current, False))
+                    current = word
+                else:
+                    current = candidate
+            if current:
+                rows.append((current, False))
+        rows.append(("", False))
+    return rows
+
+
+def wiki_scroll_limit(surface_height, surface_width=760):
+    rows = get_wiki_rows(surface_width)
+    content_height = sum(29 if is_heading else 9 if not text else 23 for text, is_heading in rows)
+    viewport_height = surface_height - 102
+    return max(0, content_height - viewport_height)
+
+
+def draw_wiki_window(surface, scroll_offset=0):
+    surface.fill((18, 24, 36))
+    title = FONT.render("Game Wiki", True, (255, 225, 145))
+    surface.blit(title, (28, 20))
+    subtitle = FONT.render("Controls, towers, enemies, and waves", True, (190, 210, 225))
+    surface.blit(subtitle, (28, 50))
+
+    rows = get_wiki_rows(surface.get_width())
+    scroll_offset = max(0, min(int(scroll_offset), wiki_scroll_limit(surface.get_height(), surface.get_width())))
+    viewport = pygame.Rect(20, 88, surface.get_width() - 40, surface.get_height() - 102)
+    previous_clip = surface.get_clip()
+    surface.set_clip(viewport)
+    y = viewport.top - scroll_offset
+    for text, is_heading in rows:
+        if is_heading:
+            y += 5
+            color = (255, 220, 135)
+            font = FONT
+            line_height = 29
+        else:
+            color = (200, 215, 230)
+            font = FONT
+            line_height = 9 if not text else 23
+        if text:
+            surface.blit(font.render(text, True, color), (32, y))
+        y += line_height
+    surface.set_clip(previous_clip)
+
+    max_scroll = wiki_scroll_limit(surface.get_height(), surface.get_width())
+    if max_scroll > 0:
+        track = pygame.Rect(surface.get_width() - 14, viewport.top, 4, viewport.height)
+        content_height = sum(29 if is_heading else 9 if not text else 23 for text, is_heading in rows)
+        thumb_height = max(24, int(track.height * viewport.height / content_height))
+        thumb_travel = track.height - thumb_height
+        thumb_y = track.top + int(thumb_travel * scroll_offset / max_scroll)
+        pygame.draw.rect(surface, (65, 78, 91), track, border_radius=2)
+        pygame.draw.rect(surface, (170, 205, 180), (track.x, thumb_y, track.width, thumb_height), border_radius=2)
+    return scroll_offset
+
+
+def run_wiki_window():
+    surface = pygame.display.set_mode((760, 680))
+    pygame.display.set_caption("Game Wiki")
+    clock = pygame.time.Clock()
+    running = True
+    scroll_offset = 0
+    while running:
+        clock.tick(FPS)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+            elif event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * 45
+                scroll_offset = max(0, min(scroll_offset, wiki_scroll_limit(surface.get_height(), surface.get_width())))
+        scroll_offset = draw_wiki_window(surface, scroll_offset)
+        pygame.display.flip()
+    pygame.quit()
+
+
+def open_wiki_window():
+    return subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--wiki"],
         cwd=os.path.dirname(os.path.abspath(__file__)),
     )
 
@@ -3617,6 +3810,7 @@ def draw_map_selection(
         )
         draw_achievements_button(surface)
         draw_bestiary_button(surface)
+        draw_wiki_button(surface)
     return costume_buttons
 
 
@@ -3665,6 +3859,7 @@ def main():
     running = True
     menu_costume_buttons = {}
     achievements_process = None
+    wiki_process = None
     tower_directory_process = None
     achievement_check_timer = 0.0
     achievement_animation_time = 0.0
@@ -3987,6 +4182,9 @@ def main():
                             achievements_process = open_achievements_window()
                     elif BESTIARY_BUTTON_RECT.collidepoint(event.pos):
                         open_bestiary_window()
+                    elif WIKI_BUTTON_RECT.collidepoint(event.pos):
+                        if wiki_process is None or wiki_process.poll() is not None:
+                            wiki_process = open_wiki_window()
                     elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
                         show_costume_window = True
                     elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
@@ -3998,6 +4196,9 @@ def main():
                                 achievements = load_achievements()
                                 award_achievement(achievements, "spiral_map")
                                 save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps, achievements=achievements)
+                elif WIKI_GAME_BUTTON_RECT.collidepoint(event.pos):
+                    if wiki_process is None or wiki_process.poll() is not None:
+                        wiki_process = open_wiki_window()
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
                         pass
@@ -4058,6 +4259,8 @@ if __name__ == "__main__":
         run_achievements_window()
     elif "--bestiary" in sys.argv:
         run_bestiary_window()
+    elif "--wiki" in sys.argv:
+        run_wiki_window()
     elif "--towers" in sys.argv:
         run_tower_directory_window(sandbox="--tower-sandbox" in sys.argv)
     else:
