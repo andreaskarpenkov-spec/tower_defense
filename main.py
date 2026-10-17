@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 import pygame
+import wiki_sync
 
 pygame.init()
 
@@ -3446,75 +3447,230 @@ def open_bestiary_window():
     )
 
 
-def get_wiki_rows(surface_width=760):
+def get_wiki_pages(surface_width=760):
     unlocked_towers, win_coins = load_progress()
     tower_entries = get_tower_directory_entries(
         unlocked_towers,
         load_highest_cleared_wave(),
         win_coins,
     )
-    sections = [
-        ("Playing", [
-            "Place towers beside the path, then launch each wave with the Send Wave button.",
-            "Enemies that reach the end cost you a life. Defeat all enemies to clear a wave.",
-            "Click an existing tower to buy its one-time $80 upgrade against Shooter projectiles.",
-            "Press T to reopen the Tower Directory; choose tower types with the listed keys.",
+    page_sections = [
+        ("Basics", [
+            ("Playing", [
+                "Place towers beside the path, then launch each wave with the Send Wave button.",
+                "Enemies that reach the end cost you a life. Defeat all enemies to clear a wave.",
+                "Click an existing tower to buy its one-time $80 upgrade against Shooter projectiles.",
+                "Press T to reopen the Tower Directory; choose tower types with the listed keys.",
+            ]),
+            ("Controls", [
+                "Use the number and letter shortcuts shown in the Tower Directory to select a tower.",
+                "Press Space to pause or resume enemies in Developer Mode.",
+                "Press Escape to close a Wiki page window.",
+            ]),
         ]),
         ("Towers", [
-            f"{entry['shortcut']}  {entry['name']}: {entry['details']}. {entry['unlock_hint']}."
-            for entry in tower_entries
+            ("Tower reference", [
+                f"{entry['shortcut']}  {entry['name']}: {entry['details']}. {entry['unlock_hint']}."
+                for entry in tower_entries
+            ]),
         ]),
         ("Enemies", [
-            f"{info['name']} ({info['speed']}): {info['notes']}"
-            for info in BESTIARY.values()
+            ("Enemy reference", [
+                f"{info['name']} ({info['speed']}): {info['notes']}"
+                for info in BESTIARY.values()
+            ]),
         ]),
-        ("Wave guide", [
-            f"Wave {index + 1}: {wave['count']} enemies; standard speed {wave['speed']}."
-            for index, wave in enumerate(WAVES)
+        ("Waves", [
+            ("Wave guide", [
+                f"Wave {index + 1}: {wave['count']} enemies; standard speed {wave['speed']}."
+                for index, wave in enumerate(WAVES)
+            ]),
         ]),
-        ("Special notes", [
-            "Wave 6 introduces Lightning enemies at triple speed and Shielder enemies with orbiting projectile-blocking shields.",
-            "Wave 7 introduces Ghost enemies that turn invisible for five seconds; towers cannot target them while hidden.",
-            "Wave 8 sends a large Flyer force: every second enemy in the wave is a Flyer.",
-            "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
+        ("Extras", [
+            ("Special notes", [
+                "Wave 6 introduces Lightning enemies at triple speed and Shielder enemies with orbiting projectile-blocking shields.",
+                "Wave 7 introduces Ghost enemies that turn invisible for five seconds; towers cannot target them while hidden.",
+                "Wave 8 sends a large Flyer force: every second enemy in the wave is a Flyer.",
+                "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
+            ]),
         ]),
     ]
     text_width = max(100, surface_width - 76)
-    rows = []
-    for heading, paragraphs in sections:
-        rows.append((heading, True))
-        for paragraph in paragraphs:
-            current = ""
-            for word in paragraph.split():
-                candidate = f"{current} {word}".strip()
-                if current and FONT.size(candidate)[0] > text_width:
+    pages = []
+    for page_title, sections in page_sections:
+        rows = []
+        for heading, paragraphs in sections:
+            rows.append((heading, True))
+            for paragraph in paragraphs:
+                current = ""
+                for word in paragraph.split():
+                    candidate = f"{current} {word}".strip()
+                    if current and FONT.size(candidate)[0] > text_width:
+                        rows.append((current, False))
+                        current = word
+                    else:
+                        current = candidate
+                if current:
                     rows.append((current, False))
-                    current = word
-                else:
-                    current = candidate
-            if current:
-                rows.append((current, False))
-        rows.append(("", False))
+            rows.append(("", False))
+        pages.append((page_title, rows))
+    return pages
+
+
+def get_wiki_rows(surface_width=760):
+    return [row for _, rows in get_wiki_pages(surface_width) for row in rows]
+
+
+def get_default_wiki_documents(surface_width=760):
+    return {
+        title: "\n".join(f"## {text}" if is_heading else text for text, is_heading in rows if text)
+        for title, rows in get_wiki_pages(surface_width)
+    }
+
+
+def wiki_document_rows(content, surface_width):
+    text_width = max(100, surface_width - 76)
+    rows = []
+    for source_line in str(content).splitlines():
+        heading = source_line.startswith("## ")
+        line = source_line[3:] if heading else source_line
+        if not line:
+            rows.append(("", False))
+            continue
+        current = ""
+        heading_pending = heading
+        for word in line.split():
+            candidate = f"{current} {word}".strip()
+            if current and FONT.size(candidate)[0] > text_width:
+                rows.append((current, heading_pending))
+                heading_pending = False
+                current = word
+            else:
+                current = candidate
+        if current:
+            rows.append((current, heading_pending))
     return rows
 
 
-def wiki_scroll_limit(surface_height, surface_width=760):
-    rows = get_wiki_rows(surface_width)
+def get_wiki_page_titles(documents=None, surface_width=760):
+    titles = [title for title, _ in get_wiki_pages(surface_width)]
+    for title in (documents or {}):
+        if title not in titles and wiki_sync.is_valid_wiki_page_id(title):
+            titles.append(title)
+    return titles
+
+
+def wiki_page_tab_rects(surface, page_titles=None, current_page=0):
+    page_titles = page_titles or get_wiki_page_titles(surface_width=surface.get_width())
+    visible_count = min(5, len(page_titles))
+    first_index = max(0, min(current_page - visible_count + 1, len(page_titles) - visible_count))
+    if len(page_titles) > 5:
+        left = 58
+        right = surface.get_width() - 58
+    else:
+        left = 20
+        right = surface.get_width() - 20
+    tab_width = (right - left) // visible_count
+    return [
+        (index, pygame.Rect(left + offset * tab_width, surface.get_height() - 42, tab_width, 30))
+        for offset, index in enumerate(range(first_index, first_index + visible_count))
+    ]
+
+
+def wiki_page_nav_rects(surface, page_count):
+    if page_count <= 5:
+        return {}
+    return {
+        "previous": pygame.Rect(20, surface.get_height() - 42, 30, 30),
+        "next": pygame.Rect(surface.get_width() - 50, surface.get_height() - 42, 30, 30),
+    }
+
+
+def wiki_scroll_limit(surface_height, surface_width=760, page=0, documents=None):
+    pages = get_wiki_pages(surface_width)
+    page_titles = get_wiki_page_titles(documents, surface_width)
+    page = max(0, min(int(page), len(page_titles) - 1))
+    if documents is None:
+        rows = pages[page][1]
+    else:
+        rows = wiki_document_rows(documents.get(page_titles[page], ""), surface_width)
     content_height = sum(29 if is_heading else 9 if not text else 23 for text, is_heading in rows)
-    viewport_height = surface_height - 102
+    viewport_height = surface_height - 140
     return max(0, content_height - viewport_height)
 
 
-def draw_wiki_window(surface, scroll_offset=0):
-    surface.fill((18, 24, 36))
-    title = FONT.render("Game Wiki", True, (255, 225, 145))
-    surface.blit(title, (28, 20))
-    subtitle = FONT.render("Controls, towers, enemies, and waves", True, (190, 210, 225))
-    surface.blit(subtitle, (28, 50))
+def wiki_action_button_rects(surface, editing, creating_page=False):
+    if creating_page:
+        return {
+            "create": pygame.Rect(surface.get_width() - 172, 18, 72, 30),
+            "cancel": pygame.Rect(surface.get_width() - 92, 18, 72, 30),
+        }
+    if editing:
+        return {
+            "save": pygame.Rect(surface.get_width() - 172, 18, 72, 30),
+            "cancel": pygame.Rect(surface.get_width() - 92, 18, 72, 30),
+        }
+    return {
+        "new_page": pygame.Rect(surface.get_width() - 218, 18, 108, 30),
+        "edit": pygame.Rect(surface.get_width() - 100, 18, 80, 30),
+    }
 
-    rows = get_wiki_rows(surface.get_width())
-    scroll_offset = max(0, min(int(scroll_offset), wiki_scroll_limit(surface.get_height(), surface.get_width())))
-    viewport = pygame.Rect(20, 88, surface.get_width() - 40, surface.get_height() - 102)
+
+def draw_wiki_window(
+    surface,
+    scroll_offset=0,
+    page=0,
+    documents=None,
+    editing=False,
+    edit_text="",
+    sync_status="Local only",
+    creating_page=False,
+    new_page_title="",
+):
+    surface.fill((18, 24, 36))
+    pages = get_wiki_pages(surface.get_width())
+    page_titles = get_wiki_page_titles(documents, surface.get_width())
+    page = max(0, min(int(page), len(page_titles) - 1))
+    page_title = page_titles[page]
+    title_text = "Create Wiki Page" if creating_page else f"Game Wiki / {page_title}"
+    title = FONT.render(title_text, True, (255, 225, 145))
+    surface.blit(title, (28, 20))
+    if creating_page:
+        rows = []
+    elif documents is None:
+        rows = pages[page][1]
+    elif page_title in documents:
+        current_text = edit_text if editing else documents.get(page_title, "")
+        if editing:
+            current_text += "_"
+        rows = wiki_document_rows(current_text, surface.get_width())
+    else:
+        rows = []
+    current_documents = documents
+    if editing:
+        current_documents = {**(documents or {}), page_title: edit_text}
+    scroll_offset = max(
+        0,
+        min(
+            int(scroll_offset),
+            wiki_scroll_limit(surface.get_height(), surface.get_width(), page, current_documents),
+        ),
+    )
+    subtitle = FONT.render(
+        f"Title: {new_page_title or '...'}_ | Enter to create | {sync_status}" if creating_page
+        else f"Enter text, Return for a new line, Ctrl+S to save | {sync_status}" if editing
+        else f"Page {page + 1} of {len(page_titles)} | {sync_status}",
+        True,
+        (190, 210, 225),
+    )
+    surface.blit(subtitle, (28, 50))
+    for action, rect in wiki_action_button_rects(surface, editing, creating_page).items():
+        pygame.draw.rect(surface, (75, 120, 85) if action in {"save", "create"} else (70, 85, 100), rect, border_radius=5)
+        label_text = {"new_page": "New Page"}.get(action, action.title())
+        label = FONT.render(label_text, True, (255, 255, 255))
+        surface.blit(label, label.get_rect(center=rect.center))
+
+    viewport = pygame.Rect(20, 88, surface.get_width() - 40, surface.get_height() - 140)
     previous_clip = surface.get_clip()
     surface.set_clip(viewport)
     y = viewport.top - scroll_offset
@@ -3533,7 +3689,7 @@ def draw_wiki_window(surface, scroll_offset=0):
         y += line_height
     surface.set_clip(previous_clip)
 
-    max_scroll = wiki_scroll_limit(surface.get_height(), surface.get_width())
+    max_scroll = wiki_scroll_limit(surface.get_height(), surface.get_width(), page, current_documents)
     if max_scroll > 0:
         track = pygame.Rect(surface.get_width() - 14, viewport.top, 4, viewport.height)
         content_height = sum(29 if is_heading else 9 if not text else 23 for text, is_heading in rows)
@@ -3542,6 +3698,23 @@ def draw_wiki_window(surface, scroll_offset=0):
         thumb_y = track.top + int(thumb_travel * scroll_offset / max_scroll)
         pygame.draw.rect(surface, (65, 78, 91), track, border_radius=2)
         pygame.draw.rect(surface, (170, 205, 180), (track.x, thumb_y, track.width, thumb_height), border_radius=2)
+    for tab_index, tab_rect in wiki_page_tab_rects(surface, page_titles, page):
+        tab_title = page_titles[tab_index]
+        selected = tab_index == page
+        pygame.draw.rect(surface, (68, 105, 83) if selected else (44, 55, 68), tab_rect, border_radius=4)
+        pygame.draw.rect(surface, (170, 210, 170) if selected else (95, 110, 125), tab_rect, 1, border_radius=4)
+        display_title = tab_title
+        while display_title and FONT.size(display_title)[0] > tab_rect.width - 10:
+            display_title = display_title[:-1]
+        if display_title != tab_title:
+            display_title = display_title[:-3] + "..." if len(display_title) > 3 else "..."
+        label = FONT.render(display_title, True, (255, 255, 255))
+        surface.blit(label, label.get_rect(center=tab_rect.center))
+    for direction, nav_rect in wiki_page_nav_rects(surface, len(page_titles)).items():
+        pygame.draw.rect(surface, (54, 68, 80), nav_rect, border_radius=4)
+        glyph = "<" if direction == "previous" else ">"
+        label = FONT.render(glyph, True, (235, 240, 245))
+        surface.blit(label, label.get_rect(center=nav_rect.center))
     return scroll_offset
 
 
@@ -3551,16 +3724,163 @@ def run_wiki_window():
     clock = pygame.time.Clock()
     running = True
     scroll_offset = 0
+    current_page = 0
+    defaults = get_default_wiki_documents(surface.get_width())
+    page_documents, sync_status = wiki_sync.load_wiki_pages(defaults)
+    editing = False
+    creating_page = False
+    edit_text = ""
+    new_page_title = ""
+    refresh_elapsed = 0.0
+
+    def save_current_page():
+        nonlocal editing, sync_status
+        page_title = get_wiki_page_titles(page_documents, surface.get_width())[current_page]
+        saved, sync_status = wiki_sync.save_wiki_page(page_title, edit_text, page_documents)
+        if saved:
+            page_documents[page_title] = edit_text
+            editing = False
+            pygame.key.stop_text_input()
+
+    def create_new_page():
+        nonlocal current_page, creating_page, editing, edit_text, sync_status, scroll_offset
+        page_title = new_page_title.strip()
+        existing_titles = get_wiki_page_titles(page_documents, surface.get_width())
+        if not wiki_sync.is_valid_wiki_page_id(page_title):
+            sync_status = f"Titles must be 1-{wiki_sync.MAX_WIKI_PAGE_ID_LENGTH} characters"
+            return
+        if any(title.casefold() == page_title.casefold() for title in existing_titles):
+            sync_status = "That page already exists"
+            return
+
+        page_documents[page_title] = ""
+        saved, sync_status = wiki_sync.save_wiki_page(page_title, "", page_documents)
+        if saved:
+            current_page = get_wiki_page_titles(page_documents, surface.get_width()).index(page_title)
+            creating_page = False
+            editing = True
+            edit_text = ""
+            scroll_offset = 0
+
     while running:
-        clock.tick(FPS)
+        dt = clock.tick(FPS) / 1000.0
+        refresh_elapsed += dt
+        if refresh_elapsed >= 2.0 and not editing and not creating_page:
+            previous_titles = get_wiki_page_titles(page_documents, surface.get_width())
+            selected_title = previous_titles[current_page]
+            refreshed_pages, sync_status = wiki_sync.load_wiki_pages(defaults)
+            if refreshed_pages != page_documents:
+                page_documents = refreshed_pages
+                refreshed_titles = get_wiki_page_titles(page_documents, surface.get_width())
+                if selected_title in refreshed_titles:
+                    current_page = refreshed_titles.index(selected_title)
+                else:
+                    current_page = min(current_page, len(refreshed_titles) - 1)
+                scroll_offset = 0
+            refresh_elapsed = 0.0
+
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.MOUSEWHEEL:
+            elif event.type == pygame.KEYDOWN and creating_page:
+                if event.key == pygame.K_ESCAPE:
+                    creating_page = False
+                    pygame.key.stop_text_input()
+                elif event.key == pygame.K_RETURN:
+                    create_new_page()
+                elif event.key == pygame.K_BACKSPACE:
+                    new_page_title = new_page_title[:-1]
+            elif event.type == pygame.KEYDOWN and editing:
+                if event.key == pygame.K_ESCAPE:
+                    editing = False
+                    pygame.key.stop_text_input()
+                elif event.key == pygame.K_s and event.mod & pygame.KMOD_CTRL:
+                    save_current_page()
+                elif event.key == pygame.K_BACKSPACE:
+                    edit_text = edit_text[:-1]
+                elif event.key == pygame.K_RETURN:
+                    if len(edit_text) < wiki_sync.MAX_WIKI_PAGE_LENGTH:
+                        edit_text += "\n"
+            elif event.type == pygame.TEXTINPUT and editing:
+                if len(edit_text) + len(event.text) <= wiki_sync.MAX_WIKI_PAGE_LENGTH:
+                    edit_text += event.text
+            elif event.type == pygame.TEXTINPUT and creating_page:
+                if len(new_page_title) + len(event.text) <= wiki_sync.MAX_WIKI_PAGE_ID_LENGTH:
+                    new_page_title += event.text
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_e:
+                    page_title = get_wiki_page_titles(page_documents, surface.get_width())[current_page]
+                    edit_text = page_documents.get(page_title, "")
+                    editing = True
+                    pygame.key.start_text_input()
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    direction = 1 if event.key == pygame.K_RIGHT else -1
+                    current_page = (current_page + direction) % len(get_wiki_page_titles(page_documents, surface.get_width()))
+                    scroll_offset = 0
+            elif event.type == pygame.MOUSEWHEEL and not editing and not creating_page:
                 scroll_offset -= event.y * 45
-                scroll_offset = max(0, min(scroll_offset, wiki_scroll_limit(surface.get_height(), surface.get_width())))
-        scroll_offset = draw_wiki_window(surface, scroll_offset)
+                scroll_offset = max(
+                    0,
+                    min(
+                        scroll_offset,
+                        wiki_scroll_limit(surface.get_height(), surface.get_width(), current_page, page_documents),
+                    ),
+                )
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and creating_page:
+                action_rects = wiki_action_button_rects(surface, False, True)
+                if action_rects["create"].collidepoint(event.pos):
+                    create_new_page()
+                elif action_rects["cancel"].collidepoint(event.pos):
+                    creating_page = False
+                    pygame.key.stop_text_input()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and editing:
+                action_rects = wiki_action_button_rects(surface, True)
+                if action_rects["save"].collidepoint(event.pos):
+                    save_current_page()
+                elif action_rects["cancel"].collidepoint(event.pos):
+                    editing = False
+                    pygame.key.stop_text_input()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                action_rects = wiki_action_button_rects(surface, False)
+                if action_rects["new_page"].collidepoint(event.pos):
+                    creating_page = True
+                    new_page_title = ""
+                    pygame.key.start_text_input()
+                    continue
+                if action_rects["edit"].collidepoint(event.pos):
+                    page_title = get_wiki_page_titles(page_documents, surface.get_width())[current_page]
+                    edit_text = page_documents.get(page_title, "")
+                    editing = True
+                    pygame.key.start_text_input()
+                    continue
+                page_titles = get_wiki_page_titles(page_documents, surface.get_width())
+                for direction, nav_rect in wiki_page_nav_rects(surface, len(page_titles)).items():
+                    if nav_rect.collidepoint(event.pos):
+                        offset = 1 if direction == "next" else -1
+                        current_page = (current_page + offset) % len(page_titles)
+                        scroll_offset = 0
+                        break
+                for index, tab_rect in wiki_page_tab_rects(surface, page_titles, current_page):
+                    if tab_rect.collidepoint(event.pos):
+                        current_page = index
+                        scroll_offset = 0
+                        break
+        scroll_offset = draw_wiki_window(
+            surface,
+            scroll_offset,
+            current_page,
+            page_documents,
+            editing,
+            edit_text,
+            sync_status,
+            creating_page,
+            new_page_title,
+        )
         pygame.display.flip()
+    if editing or creating_page:
+        pygame.key.stop_text_input()
     pygame.quit()
 
 

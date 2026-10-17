@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pygame
 
 import main
+import wiki_sync
 from main import Enemy, Game, MAPS, MAP_UNLOCK_COST, TOWER_UNLOCK_WAVES, Tower, WAVES, load_unlocked_maps, save_unlocks
 
 
@@ -491,18 +492,77 @@ class SandboxModeTest(unittest.TestCase):
         self.assertGreater(scroll_offset, 0)
 
     def test_wiki_window_scrolls_and_launches_separately(self):
-        surface = pygame.Surface((760, 680))
+        surface = pygame.Surface((500, 300))
+        pages = main.get_wiki_pages()
 
-        scroll_offset = main.draw_wiki_window(surface, 1000)
+        self.assertEqual([title for title, _ in pages], ["Basics", "Towers", "Enemies", "Waves", "Extras"])
+        scroll_offset = main.draw_wiki_window(surface, 1000, page=1)
 
-        self.assertEqual(scroll_offset, main.wiki_scroll_limit(680))
+        self.assertEqual(scroll_offset, main.wiki_scroll_limit(300, surface_width=500, page=1))
         self.assertGreater(scroll_offset, 0)
+
+        custom_pages = main.get_default_wiki_documents()
+        custom_pages["Community Notes"] = "## Community Notes\nShared page text"
+        custom_titles = main.get_wiki_page_titles(custom_pages)
+        self.assertEqual(
+            len(custom_titles),
+            len(pages) + 1,
+        )
+        visible_tabs = main.wiki_page_tab_rects(surface, custom_titles, len(custom_titles) - 1)
+        self.assertIn(len(custom_titles) - 1, [index for index, _ in visible_tabs])
+        main.draw_wiki_window(pygame.Surface((760, 680)), page=len(pages), documents=custom_pages)
 
         with patch("main.subprocess.Popen") as popen:
             main.open_wiki_window()
 
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--wiki")
+
+    def test_wiki_edit_persists_locally_without_cloud_settings(self):
+        defaults = {"Basics": "Default basics", "Towers": "Default towers"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, "wiki.json")
+            with patch.object(wiki_sync, "LOCAL_WIKI_PATH", local_path), patch.dict(
+                os.environ,
+                {"TOWER_WIKI_SUPABASE_URL": "", "TOWER_WIKI_SUPABASE_ANON_KEY": ""},
+            ):
+                local_pages = {**defaults, "Community Notes": "New community page"}
+                local_pages["Basics"] = "Player-edited basics"
+                saved, status = wiki_sync.save_wiki_page("Basics", local_pages["Basics"], local_pages)
+                wiki_sync.save_wiki_page("Community Notes", local_pages["Community Notes"], local_pages)
+                pages, loaded_status = wiki_sync.load_wiki_pages(defaults)
+
+        self.assertTrue(saved)
+        self.assertEqual(status, "Local only")
+        self.assertEqual(loaded_status, "Local only")
+        self.assertEqual(pages["Basics"], "Player-edited basics")
+        self.assertEqual(pages["Community Notes"], "New community page")
+
+    def test_wiki_edits_sync_through_configured_cloud_service(self):
+        defaults = {"Basics": "Default basics", "Towers": "Default towers"}
+        remote_rows = [
+            {"page_id": "Basics", "content": "Shared basics"},
+            {"page_id": "Community Notes", "content": "Shared custom page"},
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(wiki_sync, "LOCAL_WIKI_PATH", os.path.join(temp_dir, "wiki.json")), patch.dict(
+                os.environ,
+                {
+                    "TOWER_WIKI_SUPABASE_URL": "https://example.supabase.co",
+                    "TOWER_WIKI_SUPABASE_ANON_KEY": "public-test-key",
+                },
+            ), patch("wiki_sync._request", side_effect=[remote_rows, None, None]) as request:
+                pages, status = wiki_sync.load_wiki_pages(defaults)
+                saved, save_status = wiki_sync.save_wiki_page("Basics", "Updated shared basics", pages)
+
+        self.assertEqual(pages["Basics"], "Shared basics")
+        self.assertEqual(pages["Community Notes"], "Shared custom page")
+        self.assertEqual(status, "Shared")
+        self.assertTrue(saved)
+        self.assertEqual(save_status, "Shared")
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[-1].args[2], "POST")
+        self.assertEqual(request.call_args_list[-1].args[3][0]["content"], "Updated shared basics")
 
     def test_every_achievement_icon_animates_over_time(self):
         for achievement_id in main.ACHIEVEMENTS:
