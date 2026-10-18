@@ -99,6 +99,15 @@ TOWER_TYPES = {
         "color": (80, 165, 85),
         "ring": (145, 220, 125),
     },
+    "phantom": {
+        "name": "Phantom",
+        "range": 190,
+        "cooldown": 0.9,
+        "damage": 34,
+        "cost": 150,
+        "color": (95, 180, 195),
+        "ring": (145, 230, 240),
+    },
     "boinger": {
         "name": "Boinger",
         "range": 170,
@@ -140,6 +149,7 @@ TOWER_UNLOCK_WAVES = {
     "boinger": 5,
     "walker": 6,
     "gunner": 6,
+    "phantom": 7,
     "mine": 2,
 }
 TOWER_DIRECTORY_SHORTCUTS = (
@@ -156,6 +166,7 @@ TOWER_DIRECTORY_SHORTCUTS = (
     ("A", "spawner"),
     ("B", "gunner"),
     ("C", "cactus"),
+    ("D", "phantom"),
 )
 
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
@@ -277,7 +288,7 @@ def load_progress():
     return {"basic"}, 0
 
 
-def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins, sandbox=False):
+def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins, sandbox=False, unlocked_only=False):
     entries = []
     unlocked_towers = set(unlocked_towers)
     for shortcut, tower_id in TOWER_DIRECTORY_SHORTCUTS:
@@ -322,7 +333,7 @@ def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins
             "unlocked": unlocked,
             "unlock_hint": "Available" if unlocked else unlock_hint,
         })
-    return entries
+    return [entry for entry in entries if entry["unlocked"]] if unlocked_only else entries
 
 
 def load_developer_mode_state():
@@ -690,6 +701,7 @@ ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
 BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
 WIKI_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
 WIKI_GAME_BUTTON_RECT = pygame.Rect(20, 570, 86, 34)
+HOME_BUTTON_RECT = pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2 + 58, 180, 38)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
 
@@ -982,7 +994,10 @@ class Enemy:
             if self.time_since_shot >= self.cooldown:
                 self.time_since_shot = 0.0
                 if towers:
-                    eligible_towers = [tower for tower in towers if not tower.shooter_immunity]
+                    eligible_towers = [
+                        tower for tower in towers
+                        if tower.type != "nova" and not tower.shooter_immunity
+                    ]
                     if eligible_towers:
                         target_tower = min(eligible_towers, key=lambda tower: math.hypot(tower.x - self.x, tower.y - self.y))
                         self.projectiles.append(ShooterProjectile(self.x, self.y, target_tower, self.attack_damage))
@@ -1295,6 +1310,26 @@ class Tower:
             for thorn_y in (-7, 0, 7):
                 pygame.draw.line(surface, (225, 240, 190), (base_x - 2, base_y + thorn_y), (base_x - 6, base_y + thorn_y - 2), 2)
                 pygame.draw.line(surface, (225, 240, 190), (base_x + 2, base_y + thorn_y), (base_x + 6, base_y + thorn_y - 2), 2)
+        elif self.type == "phantom":
+            pulse = round(math.sin(self.time_since_shot * 2.5) * 2)
+            pygame.draw.polygon(surface, (45, 105, 120), [
+                (base_x - 11, base_y + 10),
+                (base_x - 8, base_y - 7),
+                (base_x, base_y - 16),
+                (base_x + 8, base_y - 7),
+                (base_x + 11, base_y + 10),
+            ])
+            pygame.draw.polygon(surface, (105, 205, 210), [
+                (base_x - 7, base_y + 8),
+                (base_x - 5, base_y - 6),
+                (base_x, base_y - 12),
+                (base_x + 5, base_y - 6),
+                (base_x + 7, base_y + 8),
+            ])
+            pygame.draw.circle(surface, (220, 255, 245), (base_x, base_y - 2 + pulse), 3)
+            barrel_end_x = base_x + int(math.cos(self.aim_angle) * 18)
+            barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
+            pygame.draw.line(surface, (190, 250, 245), (base_x, base_y), (barrel_end_x, barrel_end_y), 3)
         elif self.type == "warden":
             pygame.draw.rect(surface, (25, 50, 25), (base_x - 12, base_y - 14, 24, 28))
             pygame.draw.rect(surface, (100, 170, 90), (base_x - 10, base_y - 12, 20, 24))
@@ -3011,6 +3046,10 @@ class Game:
             surface.blit(msg_surface, (WIDTH // 2 - msg_surface.get_width() // 2, HEIGHT // 2 - 10))
             restart_surface = FONT.render("Press R to restart.", True, (255, 255, 255))
             surface.blit(restart_surface, (WIDTH // 2 - restart_surface.get_width() // 2, HEIGHT // 2 + 20))
+            pygame.draw.rect(surface, (65, 125, 90), HOME_BUTTON_RECT, border_radius=6)
+            pygame.draw.rect(surface, (165, 220, 175), HOME_BUTTON_RECT, 2, border_radius=6)
+            home_label = FONT.render("Return to Home", True, (255, 255, 255))
+            surface.blit(home_label, home_label.get_rect(center=HOME_BUTTON_RECT.center))
 
 
 def draw_achievement_icon_art(surface, achievement_id, center, elapsed_seconds):
@@ -3225,30 +3264,51 @@ def open_achievements_window():
     )
 
 
-def draw_tower_directory_window(surface, entries):
+def tower_directory_scroll_limit(surface_height, entry_count):
+    if entry_count <= 0:
+        return 0
+    content_bottom = 82 + (entry_count - 1) * 45 + 41
+    return max(0, content_bottom - (surface_height - 18))
+
+
+def draw_tower_directory_window(surface, entries, scroll_offset=0):
     surface.fill((18, 24, 36))
     title = FONT.render("Tower Directory", True, (255, 225, 145))
     surface.blit(title, (28, 20))
     subtitle = FONT.render("Select a tower in-game with its listed key", True, (190, 210, 225))
     surface.blit(subtitle, (28, 50))
+    scroll_offset = max(0, min(int(scroll_offset), tower_directory_scroll_limit(surface.get_height(), len(entries))))
+    viewport = pygame.Rect(20, 82, surface.get_width() - 40, surface.get_height() - 100)
+    previous_clip = surface.get_clip()
+    surface.set_clip(viewport)
 
     for index, entry in enumerate(entries):
-        rect = pygame.Rect(20, 82 + index * 45, 720, 41)
-        unlocked = entry["unlocked"]
-        pygame.draw.rect(surface, (48, 70, 60) if unlocked else (48, 58, 72), rect, border_radius=5)
-        pygame.draw.rect(surface, (110, 170, 125) if unlocked else (105, 120, 140), rect, 1, border_radius=5)
+        rect = pygame.Rect(20, 82 + index * 45 - scroll_offset, surface.get_width() - 40, 41)
+        pygame.draw.rect(surface, (48, 70, 60), rect, border_radius=5)
+        pygame.draw.rect(surface, (110, 170, 125), rect, 1, border_radius=5)
         shortcut_rect = pygame.Rect(rect.x + 8, rect.y + 6, 36, 29)
-        pygame.draw.rect(surface, (90, 125, 90) if unlocked else (68, 76, 88), shortcut_rect, border_radius=4)
+        pygame.draw.rect(surface, (90, 125, 90), shortcut_rect, border_radius=4)
         shortcut = FONT.render(entry["shortcut"], True, (255, 255, 255))
         surface.blit(shortcut, shortcut.get_rect(center=shortcut_rect.center))
 
         name = FONT.render(entry["name"], True, (245, 247, 250))
         details = FONT.render(entry["details"], True, (195, 208, 220))
-        state_color = (155, 235, 170) if unlocked else (235, 190, 120)
-        state = FONT.render(entry["unlock_hint"], True, state_color)
+        state = FONT.render(entry["unlock_hint"], True, (155, 235, 170))
         surface.blit(name, (rect.x + 56, rect.y + 3))
         surface.blit(details, (rect.x + 210, rect.y + 12))
         surface.blit(state, (rect.right - state.get_width() - 12, rect.y + 12))
+    surface.set_clip(previous_clip)
+
+    max_scroll = tower_directory_scroll_limit(surface.get_height(), len(entries))
+    if max_scroll > 0:
+        track = pygame.Rect(surface.get_width() - 14, viewport.top, 4, viewport.height)
+        content_height = 41 + (len(entries) - 1) * 45
+        thumb_height = max(24, int(track.height * viewport.height / content_height))
+        thumb_travel = track.height - thumb_height
+        thumb_y = track.top + int(thumb_travel * scroll_offset / max_scroll)
+        pygame.draw.rect(surface, (65, 78, 91), track, border_radius=2)
+        pygame.draw.rect(surface, (170, 205, 180), (track.x, thumb_y, track.width, thumb_height), border_radius=2)
+    return scroll_offset
 
 
 def run_tower_directory_window(sandbox=False):
@@ -3257,6 +3317,7 @@ def run_tower_directory_window(sandbox=False):
     clock = pygame.time.Clock()
     running = True
     refresh_timer = 0.0
+    scroll_offset = 0
     entries = []
     while running:
         dt = clock.tick(FPS) / 1000.0
@@ -3268,12 +3329,20 @@ def run_tower_directory_window(sandbox=False):
                 load_highest_cleared_wave(),
                 win_coins,
                 sandbox=sandbox,
+                unlocked_only=True,
             )
+            scroll_offset = min(scroll_offset, tower_directory_scroll_limit(surface.get_height(), len(entries)))
             refresh_timer = 0.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT or event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
-        draw_tower_directory_window(surface, entries)
+            elif event.type == pygame.MOUSEWHEEL:
+                scroll_offset -= event.y * 45
+                scroll_offset = max(
+                    0,
+                    min(scroll_offset, tower_directory_scroll_limit(surface.get_height(), len(entries))),
+                )
+        scroll_offset = draw_tower_directory_window(surface, entries, scroll_offset)
         pygame.display.flip()
     pygame.quit()
 
@@ -4328,6 +4397,9 @@ def main():
                     elif event.key == pygame.K_c:
                         if game.is_tower_unlocked("cactus"):
                             game.selected_tower = "cactus"
+                    elif event.key == pygame.K_d:
+                        if game.is_tower_unlocked("phantom"):
+                            game.selected_tower = "phantom"
                     elif event.key == pygame.K_t:
                         if tower_directory_process is None or tower_directory_process.poll() is not None:
                             tower_directory_process = open_tower_directory_window(game.sandbox)
@@ -4519,6 +4591,11 @@ def main():
                 elif WIKI_GAME_BUTTON_RECT.collidepoint(event.pos):
                     if wiki_process is None or wiki_process.poll() is not None:
                         wiki_process = open_wiki_window()
+                elif game.game_over and HOME_BUTTON_RECT.collidepoint(event.pos):
+                    in_menu = True
+                    game = None
+                    show_backstory = False
+                    show_costume_window = False
                 elif not game.game_over:
                     if game.developer_mode and game.handle_developer_spawn_click(event.pos):
                         pass

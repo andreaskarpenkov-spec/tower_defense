@@ -64,6 +64,23 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertGreater(gunner.y, 200)
 
+    def test_shooter_ignores_unupgraded_nova_tower(self):
+        path = [(40, 100), (300, 100)]
+        shooter = Enemy(path, speed=0, hp=100, reward=1, enemy_type="shooter")
+        nova = Tower(80, 100, "nova")
+        basic = Tower(180, 100, "basic")
+
+        shooter.update(1.0, [nova, basic])
+
+        self.assertFalse(nova.shooter_immunity)
+        self.assertEqual(len(shooter.projectiles), 1)
+        self.assertIs(shooter.projectiles[0].target, basic)
+
+        shooter.projectiles.clear()
+        shooter.time_since_shot = 0.0
+        shooter.update(1.0, [nova])
+        self.assertEqual(shooter.projectiles, [])
+
     def test_walker_crossing_freeze_tower_unlocks_and_saves_cactus(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
             json.dump({"unlocked_towers": ["basic", "freeze"], "highest_cleared_wave": 4}, save_file)
@@ -107,6 +124,28 @@ class SandboxModeTest(unittest.TestCase):
 
     def test_game_has_eight_waves(self):
         self.assertEqual(len(WAVES), 8)
+
+    def test_phantom_tower_unlocks_after_beating_wave_seven(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "highest_cleared_wave": 6}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            game = Game(MAPS["Classic"])
+            self.assertFalse(game.is_tower_unlocked("phantom"))
+
+            game.wave_index = 6
+            game.spawned = WAVES[6]["count"]
+            game.complete_wave_unlocks()
+
+            self.assertEqual(game.highest_cleared_wave, 7)
+            self.assertTrue(game.is_tower_unlocked("phantom"))
+        finally:
+            main.SAVE_FILE = original_save_file
+            if os.path.exists(save_path):
+                os.remove(save_path)
 
     def test_wave_eight_has_many_flyer_enemies(self):
         game = Game(MAPS["Classic"])
@@ -342,6 +381,19 @@ class SandboxModeTest(unittest.TestCase):
                 finally:
                     if os.path.exists(save_path):
                         os.remove(save_path)
+
+    def test_win_and_loss_screens_show_home_button(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        game = Game(MAPS["Classic"])
+        game.game_over = True
+
+        for victory in (False, True):
+            with self.subTest(victory=victory):
+                game.victory = victory
+                game.draw(surface)
+                button_color = surface.get_at((main.HOME_BUTTON_RECT.left + 2, main.HOME_BUTTON_RECT.top + 2))[:3]
+                self.assertNotEqual(button_color, game.background_color)
+                self.assertTrue(surface.get_rect().contains(main.HOME_BUTTON_RECT))
 
     def test_slaver_requires_campaign_win_with_only_one_placed_tower_type(self):
         for tower_types, expected_unlock in ((["basic"], True), (["basic", "rapid"], False)):
@@ -874,9 +926,12 @@ class SandboxModeTest(unittest.TestCase):
     def test_tower_directory_lists_every_tower_and_hides_secret_lock_state(self):
         entries = main.get_tower_directory_entries({"basic"}, 0, 0)
 
-        self.assertEqual(len(entries), 13)
+        self.assertEqual(len(entries), 14)
         self.assertEqual(entries[0]["shortcut"], "1")
         self.assertEqual(entries[0]["name"], "Basic")
+        phantom = next(entry for entry in entries if entry["tower_id"] == "phantom")
+        self.assertEqual(phantom["shortcut"], "D")
+        self.assertFalse(phantom["unlocked"])
         cactus = next(entry for entry in entries if entry["tower_id"] == "cactus")
         self.assertFalse(cactus["unlocked"])
         self.assertEqual(cactus["unlock_hint"], "Secret tower")
@@ -889,6 +944,20 @@ class SandboxModeTest(unittest.TestCase):
             next(entry for entry in main.get_tower_directory_entries(set(), 0, 0, sandbox=True)
                  if entry["tower_id"] == "cactus")["unlocked"]
         )
+
+    def test_tower_directory_filters_locked_towers_and_scrolls(self):
+        entries = main.get_tower_directory_entries({"basic", "rapid", "sniper", "freeze", "boinger", "walker"}, 6, 0, unlocked_only=True)
+
+        self.assertTrue(entries)
+        self.assertTrue(all(entry["unlocked"] for entry in entries))
+        self.assertNotIn("phantom", {entry["tower_id"] for entry in entries})
+
+        all_entries = main.get_tower_directory_entries(set(), 0, 0, sandbox=True)
+        surface = pygame.Surface((760, 240))
+        scroll_offset = main.draw_tower_directory_window(surface, all_entries, 1000)
+
+        self.assertEqual(scroll_offset, main.tower_directory_scroll_limit(240, len(all_entries)))
+        self.assertGreater(scroll_offset, 0)
 
     def test_sandbox_mode_does_not_update_saved_win_coins(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
