@@ -108,6 +108,15 @@ TOWER_TYPES = {
         "color": (95, 180, 195),
         "ring": (145, 230, 240),
     },
+    "milk_bob": {
+        "name": "Milk Bob",
+        "range": 175,
+        "cooldown": 1.6,
+        "damage": 28,
+        "cost": 175,
+        "color": (245, 245, 225),
+        "ring": (255, 255, 245),
+    },
     "boinger": {
         "name": "Boinger",
         "range": 170,
@@ -150,6 +159,7 @@ TOWER_UNLOCK_WAVES = {
     "walker": 6,
     "gunner": 6,
     "phantom": 7,
+    "milk_bob": 8,
     "mine": 2,
 }
 TOWER_DIRECTORY_SHORTCUTS = (
@@ -167,6 +177,7 @@ TOWER_DIRECTORY_SHORTCUTS = (
     ("B", "gunner"),
     ("C", "cactus"),
     ("D", "phantom"),
+    ("E", "milk_bob"),
 )
 
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
@@ -316,9 +327,14 @@ def get_tower_directory_entries(unlocked_towers, highest_cleared_wave, win_coins
             else:
                 details = f"Range {info['range']} | Damage {info['damage']} | Cost ${info['cost']}"
                 wave_required = TOWER_UNLOCK_WAVES.get(tower_id)
-                unlocked = sandbox or tower_id in unlocked_towers or (
-                    wave_required is not None and highest_cleared_wave >= wave_required
-                )
+                if tower_id == "phantom":
+                    unlocked = sandbox or highest_cleared_wave >= wave_required
+                elif tower_id == "milk_bob":
+                    unlocked = sandbox or highest_cleared_wave >= wave_required
+                else:
+                    unlocked = sandbox or tower_id in unlocked_towers or (
+                        wave_required is not None and highest_cleared_wave >= wave_required
+                    )
                 if tower_id == "mine_tower":
                     unlock_hint = "Secret tower"
                 elif wave_required is not None:
@@ -1239,7 +1255,7 @@ class Tower:
         for enemy in enemies:
             if enemy.is_dead() or enemy.reached_goal():
                 continue
-            if enemy.type == "ghost" and not enemy.is_visible():
+            if enemy.type == "ghost" and not enemy.is_visible() and self.type != "phantom":
                 continue
             dx = enemy.x - self.x
             dy = enemy.y - self.y
@@ -1258,6 +1274,20 @@ class Tower:
                 return FreezeProjectile(self.x, self.y, nearest, self.damage, self.color)
             if self.type == "mine_tower":
                 return BombProjectile(self.x, self.y, nearest, self.damage, self.color, enemies=enemies)
+            if self.type == "milk_bob":
+                return BombProjectile(
+                    self.x,
+                    self.y,
+                    nearest,
+                    self.damage,
+                    self.color,
+                    speed=320,
+                    splash_radius=72,
+                    enemies=enemies,
+                    explosion_color=(235, 245, 255),
+                    trail_color=(225, 240, 255),
+                    highlight_color=(255, 255, 255),
+                )
             return Projectile(self.x, self.y, nearest, self.damage, self.color)
         self.target = None
         return None
@@ -1330,6 +1360,15 @@ class Tower:
             barrel_end_x = base_x + int(math.cos(self.aim_angle) * 18)
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
             pygame.draw.line(surface, (190, 250, 245), (base_x, base_y), (barrel_end_x, barrel_end_y), 3)
+        elif self.type == "milk_bob":
+            pygame.draw.rect(surface, (190, 205, 215), (base_x - 9, base_y - 10, 18, 23), border_radius=4)
+            pygame.draw.rect(surface, (250, 250, 235), (base_x - 7, base_y - 8, 14, 19), border_radius=3)
+            pygame.draw.rect(surface, (180, 215, 230), (base_x - 8, base_y - 2, 16, 7), border_radius=2)
+            pygame.draw.rect(surface, (225, 235, 240), (base_x - 4, base_y - 15, 8, 6), border_radius=2)
+            pygame.draw.rect(surface, (130, 170, 190), (base_x - 5, base_y - 18, 10, 4), border_radius=1)
+            barrel_end_x = base_x + int(math.cos(self.aim_angle) * 18)
+            barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
+            pygame.draw.line(surface, (230, 245, 255), (base_x, base_y - 1), (barrel_end_x, barrel_end_y), 3)
         elif self.type == "warden":
             pygame.draw.rect(surface, (25, 50, 25), (base_x - 12, base_y - 14, 24, 28))
             pygame.draw.rect(surface, (100, 170, 90), (base_x - 10, base_y - 12, 20, 24))
@@ -1548,7 +1587,20 @@ class Explosion:
 
 
 class BombProjectile:
-    def __init__(self, x, y, target, damage, color, speed=260, splash_radius=52, enemies=None):
+    def __init__(
+        self,
+        x,
+        y,
+        target,
+        damage,
+        color,
+        speed=260,
+        splash_radius=52,
+        enemies=None,
+        explosion_color=(255, 140, 80),
+        trail_color=(255, 120, 40),
+        highlight_color=(255, 180, 120),
+    ):
         self.x = x
         self.y = y
         self.target = target
@@ -1557,6 +1609,9 @@ class BombProjectile:
         self.speed = speed
         self.splash_radius = splash_radius
         self.enemies = enemies or []
+        self.explosion_color = explosion_color
+        self.trail_color = trail_color
+        self.highlight_color = highlight_color
         self.active = True
         self.explosion = None
         self.trail = []
@@ -1584,7 +1639,13 @@ class BombProjectile:
                     enemy.health -= damage
                 else:
                     enemy.hp -= damage
-        self.explosion = Explosion(self.x, self.y, radius=self.splash_radius, damage=self.damage, color=(255, 140, 80))
+        self.explosion = Explosion(
+            self.x,
+            self.y,
+            radius=self.splash_radius,
+            damage=self.damage,
+            color=self.explosion_color,
+        )
 
     def update(self, dt):
         if not self.active or self.target is None or self.target.is_dead():
@@ -1629,10 +1690,10 @@ class BombProjectile:
             radius = max(2, 8 - i)
             alpha = max(20, 120 - i * 12)
             flame = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-            pygame.draw.circle(flame, (255, 120, 40, alpha), (radius, radius), radius)
+            pygame.draw.circle(flame, (*self.trail_color, alpha), (radius, radius), radius)
             surface.blit(flame, (int(px) - radius, int(py) - radius))
         pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), 6)
-        pygame.draw.circle(surface, (255, 180, 120), (int(self.x), int(self.y)), 3)
+        pygame.draw.circle(surface, self.highlight_color, (int(self.x), int(self.y)), 3)
 
 
 class Mine:
@@ -1837,12 +1898,18 @@ class Game:
         for tower_type, wave_required in TOWER_UNLOCK_WAVES.items():
             if tower_type != "basic" and self.highest_cleared_wave >= wave_required:
                 self.unlocked_towers.add(tower_type)
+            elif tower_type in {"phantom", "milk_bob"}:
+                self.unlocked_towers.discard(tower_type)
 
     def is_tower_unlocked(self, tower_type):
         if self.sandbox:
             return True
         if tower_type == "gunner":
             return self.wave_six_cleared
+        if tower_type == "phantom":
+            return self.highest_cleared_wave >= TOWER_UNLOCK_WAVES[tower_type]
+        if tower_type == "milk_bob":
+            return self.highest_cleared_wave >= TOWER_UNLOCK_WAVES[tower_type]
         if tower_type == "basic":
             return True
         return tower_type in self.unlocked_towers
@@ -4400,6 +4467,9 @@ def main():
                     elif event.key == pygame.K_d:
                         if game.is_tower_unlocked("phantom"):
                             game.selected_tower = "phantom"
+                    elif event.key == pygame.K_e:
+                        if game.is_tower_unlocked("milk_bob"):
+                            game.selected_tower = "milk_bob"
                     elif event.key == pygame.K_t:
                         if tower_directory_process is None or tower_directory_process.poll() is not None:
                             tower_directory_process = open_tower_directory_window(game.sandbox)

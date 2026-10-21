@@ -147,6 +147,34 @@ class SandboxModeTest(unittest.TestCase):
             if os.path.exists(save_path):
                 os.remove(save_path)
 
+    def test_saved_phantom_unlock_does_not_bypass_wave_seven(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic", "phantom"], "highest_cleared_wave": 6}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            game = Game(MAPS["Classic"])
+            self.assertFalse(game.is_tower_unlocked("phantom"))
+            self.assertNotIn("phantom", game.unlocked_towers)
+            self.assertFalse(
+                next(
+                    entry for entry in main.get_tower_directory_entries(
+                        game.unlocked_towers, game.highest_cleared_wave, game.win_coins
+                    )
+                    if entry["tower_id"] == "phantom"
+                )["unlocked"]
+            )
+
+            game.selected_tower = "phantom"
+            game.place_tower((100, 100))
+            self.assertFalse(any(tower.type == "phantom" for tower in game.towers))
+        finally:
+            main.SAVE_FILE = original_save_file
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
     def test_wave_eight_has_many_flyer_enemies(self):
         game = Game(MAPS["Classic"])
         game.wave_index = 7
@@ -227,6 +255,63 @@ class SandboxModeTest(unittest.TestCase):
         self.assertTrue(game.enemies[0].is_visible())
         game.enemies[0].ghost_visible = False
         self.assertFalse(game.enemies[0].is_visible())
+
+    def test_phantom_tower_targets_invisible_ghosts(self):
+        path = [(100, 100), (300, 100)]
+        ghost = Enemy(path, speed=0, hp=210, reward=36, enemy_type="ghost")
+        ghost.ghost_visible = False
+        phantom = Tower(100, 120, "phantom")
+        basic = Tower(100, 120, "basic")
+
+        self.assertIsNone(basic.update(1.0, [ghost]))
+
+        projectile = phantom.update(1.0, [ghost])
+
+        self.assertIsNotNone(projectile)
+        self.assertIs(projectile.target, ghost)
+        projectile.update(1.0)
+        self.assertLess(ghost.hp, ghost.max_hp)
+
+    def test_milk_bob_unlocks_after_beating_wave_eight(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "highest_cleared_wave": 7}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            game = Game(MAPS["Classic"])
+            self.assertFalse(game.is_tower_unlocked("milk_bob"))
+
+            game.wave_index = 7
+            game.spawned = WAVES[7]["count"]
+            game.complete_wave_unlocks()
+
+            self.assertEqual(game.highest_cleared_wave, 8)
+            self.assertTrue(game.is_tower_unlocked("milk_bob"))
+        finally:
+            main.SAVE_FILE = original_save_file
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_milk_bob_milk_balls_deal_splash_damage(self):
+        path = [(150, 100), (300, 100)]
+        target = Enemy(path, speed=0, hp=200, reward=1)
+        nearby = Enemy(path, speed=0, hp=200, reward=1)
+        distant = Enemy(path, speed=0, hp=200, reward=1)
+        nearby.x = 190
+        distant.x = 240
+        milk_bob = Tower(100, 100, "milk_bob")
+
+        projectile = milk_bob.update(1.6, [target, nearby, distant])
+        self.assertIsInstance(projectile, main.BombProjectile)
+        self.assertEqual(projectile.explosion_color, (235, 245, 255))
+
+        projectile.update(1.0)
+
+        self.assertLess(target.hp, 200)
+        self.assertLess(nearby.hp, 200)
+        self.assertEqual(distant.hp, 200)
 
     def test_map_unlock_costs_20_win_coins_and_persists(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
@@ -908,6 +993,7 @@ class SandboxModeTest(unittest.TestCase):
             "boinger",
             "walker",
             "mine_tower",
+            "milk_bob",
         ]:
             self.assertTrue(game.is_tower_unlocked(tower), tower)
 
@@ -926,12 +1012,16 @@ class SandboxModeTest(unittest.TestCase):
     def test_tower_directory_lists_every_tower_and_hides_secret_lock_state(self):
         entries = main.get_tower_directory_entries({"basic"}, 0, 0)
 
-        self.assertEqual(len(entries), 14)
+        self.assertEqual(len(entries), 15)
         self.assertEqual(entries[0]["shortcut"], "1")
         self.assertEqual(entries[0]["name"], "Basic")
         phantom = next(entry for entry in entries if entry["tower_id"] == "phantom")
         self.assertEqual(phantom["shortcut"], "D")
         self.assertFalse(phantom["unlocked"])
+        milk_bob = next(entry for entry in entries if entry["tower_id"] == "milk_bob")
+        self.assertEqual(milk_bob["shortcut"], "E")
+        self.assertFalse(milk_bob["unlocked"])
+        self.assertEqual(milk_bob["unlock_hint"], "Unlock: wave 8")
         cactus = next(entry for entry in entries if entry["tower_id"] == "cactus")
         self.assertFalse(cactus["unlocked"])
         self.assertEqual(cactus["unlock_hint"], "Secret tower")
