@@ -122,8 +122,8 @@ class SandboxModeTest(unittest.TestCase):
         self.assertNotEqual(loop.background_color, spiral.background_color)
         self.assertEqual(classic.map_name, "Classic")
 
-    def test_game_has_eight_waves(self):
-        self.assertEqual(len(WAVES), 8)
+    def test_game_has_nine_waves(self):
+        self.assertEqual(len(WAVES), 9)
 
     def test_phantom_tower_unlocks_after_beating_wave_seven(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
@@ -225,6 +225,7 @@ class SandboxModeTest(unittest.TestCase):
         self.assertIn("flyer", main.BESTIARY)
         self.assertIn("shooter", main.BESTIARY)
         self.assertIn("lightning", main.BESTIARY)
+        self.assertIn("medic", main.BESTIARY)
         self.assertIn("wave 6", main.BESTIARY["lightning"]["notes"].lower())
 
     def test_bestiary_scroll_reaches_last_enemy_entry(self):
@@ -255,6 +256,47 @@ class SandboxModeTest(unittest.TestCase):
         self.assertTrue(game.enemies[0].is_visible())
         game.enemies[0].ghost_visible = False
         self.assertFalse(game.enemies[0].is_visible())
+
+    def test_medic_enemy_first_appears_in_wave_nine(self):
+        game = Game(MAPS["Classic"])
+        game.wave_index = 8
+
+        game.spawn_enemy()
+        self.assertEqual(game.enemies[-1].type, "medic")
+
+        game.spawned = 5
+        game.spawn_enemy()
+        self.assertEqual(game.enemies[-1].type, "medic")
+
+    def test_medic_sprite_draws_doctor_coat_and_scrubs(self):
+        medic = Enemy([(80, 80), (200, 80)], speed=0, hp=100, reward=1, enemy_type="medic")
+        surface = pygame.Surface((240, 160))
+        surface.fill((0, 0, 0))
+
+        medic.draw(surface)
+
+        self.assertEqual(surface.get_at((69, 88))[:3], (225, 235, 240))
+        self.assertEqual(surface.get_at((80, 90))[:3], (105, 165, 185))
+
+    def test_medic_heals_touching_allies_without_exceeding_max_health(self):
+        path = [(100, 100), (300, 100)]
+        medic = Enemy(path, speed=0, hp=100, reward=1, enemy_type="medic")
+        ally = Enemy(path, speed=0, hp=100, reward=1)
+        distant_ally = Enemy(path, speed=0, hp=100, reward=1)
+        medic.x, medic.y = 100, 100
+        ally.x, ally.y = 120, 100
+        ally.hp = 50
+        distant_ally.x, distant_ally.y = 200, 100
+        distant_ally.hp = 50
+
+        medic.heal_touching_allies([medic, ally, distant_ally], 1.0)
+        self.assertEqual(ally.hp, 80)
+        self.assertEqual(distant_ally.hp, 50)
+        self.assertEqual(medic.hp, medic.max_hp)
+
+        ally.hp = 95
+        medic.heal_touching_allies([medic, ally], 1.0)
+        self.assertEqual(ally.hp, ally.max_hp)
 
     def test_phantom_tower_targets_invisible_ghosts(self):
         path = [(100, 100), (300, 100)]

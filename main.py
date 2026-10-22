@@ -21,6 +21,8 @@ MINE_COST = 65
 MINE_DAMAGE = 160
 WALKER_COST = 60
 WALKER_DAMAGE = 24
+MEDIC_TOUCH_RANGE = 26
+MEDIC_HEAL_RATE = 30
 FONT = pygame.font.SysFont("arial", 18)
 MATRIX_RAIN_FONT = pygame.font.SysFont("monospace", 10, bold=True)
 
@@ -234,6 +236,7 @@ BESTIARY = {
     "lightning": {"name": "Lightning", "speed": "3x regular speed", "notes": "A blinding fast enemy that first appears in wave 6."},
     "shielder": {"name": "Shielder", "speed": "slow but stubborn", "notes": "A wave 6 defender that carries an orbiting shield that blocks incoming projectiles."},
     "ghost": {"name": "Ghost", "speed": "standard", "notes": "A wave 7 spirit that flashes visible for 10 sec then invisible for 5 sec."},
+    "medic": {"name": "Medic", "speed": "standard", "notes": "A wave 9 support enemy that heals nearby allies when they touch."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
 ACHIEVEMENT_POPUPS = []
@@ -755,6 +758,7 @@ WAVES = [
     {"count": 18, "speed": 9.5, "hp": 650, "reward": 50},
     {"count": 22, "speed": 10.5, "hp": 780, "reward": 60},
     {"count": 30, "speed": 11.5, "hp": 900, "reward": 70},
+    {"count": 36, "speed": 12.5, "hp": 1050, "reward": 80},
 ]
 
 SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -1034,6 +1038,15 @@ class Enemy:
             self.x += dx / distance * step
             self.y += dy / distance * step
 
+    def heal_touching_allies(self, enemies, dt):
+        if self.type != "medic" or self.is_dead() or self.reached_goal():
+            return
+        for ally in enemies:
+            if ally is self or ally.is_dead() or ally.reached_goal():
+                continue
+            if math.hypot(ally.x - self.x, ally.y - self.y) <= MEDIC_TOUCH_RANGE:
+                ally.hp = min(ally.max_hp, ally.hp + MEDIC_HEAL_RATE * dt)
+
     def draw(self, surface):
         center_x, center_y = int(self.x), int(self.y)
         if self.type == "flyer":
@@ -1095,6 +1108,28 @@ class Enemy:
             pygame.draw.circle(surface, (215, 230, 255), (center_x, center_y), 12)
             pygame.draw.circle(surface, (130, 150, 200), (center_x, center_y), 7)
             eye_color = (240, 255, 255)
+        elif self.type == "medic":
+            pygame.draw.polygon(surface, (225, 235, 240), [
+                (center_x - 10, center_y - 1),
+                (center_x - 14, center_y + 15),
+                (center_x + 14, center_y + 15),
+                (center_x + 10, center_y - 1),
+                (center_x, center_y + 4),
+            ])
+            pygame.draw.polygon(surface, (105, 165, 185), [
+                (center_x - 4, center_y - 1),
+                (center_x, center_y + 5),
+                (center_x + 4, center_y - 1),
+                (center_x + 3, center_y + 12),
+                (center_x - 3, center_y + 12),
+            ])
+            pygame.draw.circle(surface, (230, 180, 140), (center_x, center_y - 7), 9)
+            pygame.draw.arc(surface, (95, 65, 50), (center_x - 9, center_y - 17, 18, 16), math.pi, math.tau, 4)
+            pygame.draw.circle(surface, (220, 235, 245), (center_x, center_y - 14), 3, 1)
+            pygame.draw.line(surface, (65, 105, 120), (center_x - 8, center_y + 2), (center_x - 5, center_y + 12), 2)
+            pygame.draw.arc(surface, (65, 105, 120), (center_x - 7, center_y + 7, 14, 12), 0, math.pi, 2)
+            pygame.draw.circle(surface, (65, 105, 120), (center_x + 5, center_y + 15), 2)
+            eye_color = (255, 255, 220)
         else:
             pygame.draw.polygon(
                 surface,
@@ -2070,7 +2105,7 @@ class Game:
             enemy.y = clamp(enemy.y + dy, 0, HEIGHT)
 
     def set_developer_spawn_type(self, enemy_type):
-        if enemy_type in {"ground", "flyer", "shooter", "lightning", "shielder", "ghost"}:
+        if enemy_type in {"ground", "flyer", "shooter", "lightning", "shielder", "ghost", "medic"}:
             self.developer_spawn_type = enemy_type
 
     def developer_spawn_enemy(self):
@@ -2087,6 +2122,8 @@ class Game:
             enemy = Enemy(self.path_points, speed=18.0, hp=220, reward=35, enemy_type="lightning")
         elif enemy_type == "shielder":
             enemy = Enemy(self.path_points, speed=4.8, hp=260, reward=40, enemy_type="shielder")
+        elif enemy_type == "medic":
+            enemy = Enemy(self.path_points, speed=5.0, hp=240, reward=45, enemy_type="medic")
         else:
             enemy = Enemy(self.path_points, speed=5.0, hp=210, reward=36, enemy_type="ghost")
         self.enemies.append(enemy)
@@ -2591,7 +2628,9 @@ class Game:
     def spawn_enemy(self):
         wave = WAVES[self.wave_index]
         enemy_type = "ground"
-        if self.wave_index >= 7 and (self.spawned + 1) % 2 == 0:
+        if self.wave_index >= 8 and (self.spawned == 0 or (self.spawned + 1) % 6 == 0):
+            enemy_type = "medic"
+        elif self.wave_index >= 7 and (self.spawned + 1) % 2 == 0:
             enemy_type = "flyer"
         elif self.wave_index >= 6 and (self.spawned == 0 or (self.spawned + 1) % 5 == 0):
             enemy_type = "ghost"
@@ -2611,7 +2650,7 @@ class Game:
         elif enemy_type == "shielder":
             speed *= 0.9
         hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.2 if enemy_type == "shielder" else 1.0))
-        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (18 if enemy_type == "shielder" else 0) + (20 if enemy_type == "ghost" else 0)
+        reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (18 if enemy_type == "shielder" else 0) + (20 if enemy_type == "ghost" else 0) + (25 if enemy_type == "medic" else 0)
         enemy = Enemy(self.path_points, speed=speed, hp=hp, reward=reward, enemy_type=enemy_type)
         self.enemies.append(enemy)
         self.spawned += 1
@@ -2688,6 +2727,9 @@ class Game:
                         enemy_kills=self.enemy_kills,
                     )
                     self.enemies.remove(enemy)
+
+            for medic in self.enemies:
+                medic.heal_touching_allies(self.enemies, dt)
 
             for enemy in self.enemies:
                 if enemy.type == "shooter":
@@ -3060,7 +3102,7 @@ class Game:
             surface.blit(developer_text, (20, 12))
             spawn_button_y = 36
             self.developer_spawn_rects = {}
-            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("shielder", "Shielder"), ("ghost", "Ghost")]
+            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("shielder", "Shielder"), ("ghost", "Ghost"), ("medic", "Medic")]
             for index, (enemy_type, label) in enumerate(enemy_types):
                 rect = pygame.Rect(20 + index * 110, spawn_button_y, 100, 28)
                 self.developer_spawn_rects[enemy_type] = rect
@@ -3514,6 +3556,27 @@ def draw_bestiary_window(surface, scroll_offset=0):
             pygame.draw.circle(surface, (220, 230, 255), (center_x, center_y), 12)
             pygame.draw.circle(surface, (150, 170, 210), (center_x, center_y), 8)
             pygame.draw.polygon(surface, (220, 230, 255), [(center_x - 9, center_y + 10), (center_x - 2, center_y + 18), (center_x + 5, center_y + 10), (center_x + 11, center_y + 18), (center_x + 3, center_y + 23), (center_x - 5, center_y + 23)])
+        elif enemy_id == "medic":
+            pygame.draw.polygon(surface, (225, 235, 240), [
+                (center_x - 10, center_y - 1),
+                (center_x - 14, center_y + 15),
+                (center_x + 14, center_y + 15),
+                (center_x + 10, center_y - 1),
+                (center_x, center_y + 4),
+            ])
+            pygame.draw.polygon(surface, (105, 165, 185), [
+                (center_x - 4, center_y - 1),
+                (center_x, center_y + 5),
+                (center_x + 4, center_y - 1),
+                (center_x + 3, center_y + 12),
+                (center_x - 3, center_y + 12),
+            ])
+            pygame.draw.circle(surface, (230, 180, 140), (center_x, center_y - 7), 9)
+            pygame.draw.arc(surface, (95, 65, 50), (center_x - 9, center_y - 17, 18, 16), math.pi, math.tau, 4)
+            pygame.draw.circle(surface, (220, 235, 245), (center_x, center_y - 14), 3, 1)
+            pygame.draw.line(surface, (65, 105, 120), (center_x - 8, center_y + 2), (center_x - 5, center_y + 12), 2)
+            pygame.draw.arc(surface, (65, 105, 120), (center_x - 7, center_y + 7, 14, 12), 0, math.pi, 2)
+            pygame.draw.circle(surface, (65, 105, 120), (center_x + 5, center_y + 15), 2)
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
@@ -3525,6 +3588,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "lightning": (255, 255, 255),
             "shielder": (230, 245, 255),
             "ghost": (240, 255, 255),
+            "medic": (255, 255, 220),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
         pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
@@ -3625,8 +3689,9 @@ def get_wiki_pages(surface_width=760):
         ("Extras", [
             ("Special notes", [
                 "Wave 6 introduces Lightning enemies at triple speed and Shielder enemies with orbiting projectile-blocking shields.",
-                "Wave 7 introduces Ghost enemies that turn invisible for five seconds; towers cannot target them while hidden.",
+                "Wave 7 introduces Ghost enemies that turn invisible for five seconds; only Phantom towers can target them while hidden.",
                 "Wave 8 sends a large Flyer force: every second enemy in the wave is a Flyer.",
+                "Wave 9 introduces Medic enemies that heal nearby allies they touch.",
                 "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
             ]),
         ]),
