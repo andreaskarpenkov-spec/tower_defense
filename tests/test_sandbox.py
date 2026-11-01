@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import date
 from unittest.mock import patch
 
 import pygame
@@ -12,6 +13,90 @@ from main import Enemy, Game, MAPS, MAP_UNLOCK_COST, TOWER_UNLOCK_WAVES, Tower, 
 
 
 class SandboxModeTest(unittest.TestCase):
+    def test_seasonal_map_availability_uses_inclusive_annual_date_ranges(self):
+        seasonal_map = {
+            "path": [(0, 100), (840, 100)],
+            "holiday": "Winter holiday",
+            "start": (12, 24),
+            "end": (1, 2),
+            "background": (15, 25, 45),
+        }
+        with patch.dict(main.SEASONAL_MAPS, {"Winter map": seasonal_map}):
+            self.assertTrue(main.is_seasonal_map_available("Winter map", date(2026, 12, 24)))
+            self.assertTrue(main.is_seasonal_map_available("Winter map", date(2027, 1, 2)))
+            self.assertFalse(main.is_seasonal_map_available("Winter map", date(2027, 1, 3)))
+            self.assertFalse(main.is_seasonal_map_available("Winter map", date(2027, 6, 1)))
+            self.assertTrue(main.is_map_available_for_play("Winter map", date(2026, 12, 25)))
+            self.assertFalse(main.is_map_available_for_play("Winter map", date(2026, 12, 23)))
+            self.assertEqual(main.get_map_path("Winter map"), seasonal_map["path"])
+
+    def test_present_maze_is_only_available_christmas_eve_through_boxing_day(self):
+        map_name = "present maze"
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 12, 24)))
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 12, 25)))
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 12, 26)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 12, 23)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 12, 27)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2027, 1, 1)))
+
+    def test_seasonal_date_override_advances_across_months_and_years(self):
+        self.assertEqual(main.advance_seasonal_date(date(2026, 12, 23), 1), date(2026, 12, 24))
+        self.assertEqual(main.advance_seasonal_date(date(2026, 12, 31), 1), date(2027, 1, 1))
+        self.assertEqual(main.advance_seasonal_date(date(2027, 1, 1), -1), date(2026, 12, 31))
+        self.assertTrue(main.is_seasonal_map_available(
+            "present maze", main.advance_seasonal_date(date(2026, 12, 23), 1)
+        ))
+        self.assertTrue(main.is_seasonal_map_available(
+            "present maze", main.advance_seasonal_date(date(2026, 12, 23), 2)
+        ))
+
+    def test_seasonal_date_panel_draws_date_controls(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        buttons = main.draw_seasonal_date_panel(surface, date(2026, 12, 25))
+
+        self.assertEqual(set(buttons), {"previous", "next", "close"})
+        self.assertTrue(buttons["previous"].collidepoint(buttons["previous"].center))
+        self.assertTrue(buttons["next"].collidepoint(buttons["next"].center))
+
+    def test_seasonal_maps_menu_shows_present_maze_when_closed(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        buttons = main.draw_seasonal_maps_menu(surface, date(2026, 12, 25))
+
+        self.assertEqual(set(buttons), {"present maze"})
+        self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
+        self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
+        self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
+
+    def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
+        map_name = "present maze"
+        game = Game(main.get_map_path(map_name), map_name=map_name)
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        self.assertEqual(game.path_points, MAPS["Spiral"])
+        self.assertNotEqual(game.background_color, main.MAP_BACKGROUNDS["Spiral"])
+        game.draw(surface)
+
+        self.assertEqual(surface.get_at((166, 162))[:3], (205, 55, 60))
+
+    def test_present_enemies_sometimes_emerge_from_a_present_box(self):
+        map_name = "present maze"
+        game = Game(main.get_map_path(map_name), map_name=map_name)
+        game.wave_index = 0
+        game.spawned = 0
+        box_x, box_y = main.SEASONAL_MAPS[map_name]["present_boxes"][0]
+
+        with patch.object(main.random, "random", return_value=0.0):
+            with patch.object(main.random, "choice", return_value=(box_x, box_y)):
+                game.spawn_enemy()
+
+        present = game.enemies[0]
+        self.assertEqual(present.type, "present")
+        self.assertEqual(present.segment, 0)
+        self.assertAlmostEqual(present.x, box_x)
+        self.assertEqual(present.y, 120)
+
     def test_save_file_is_stored_with_game(self):
         self.assertTrue(os.path.isabs(main.SAVE_FILE))
         self.assertEqual(
@@ -237,7 +322,7 @@ class SandboxModeTest(unittest.TestCase):
         self.assertGreater(scroll_offset, 0)
 
     def test_every_bestiary_enemy_has_visible_face_details(self):
-        surface = pygame.Surface((600, 700))
+        surface = pygame.Surface((600, 123 + len(main.BESTIARY) * 90))
         main.draw_bestiary_window(surface)
 
         for index, enemy_id in enumerate(main.BESTIARY):

@@ -4,6 +4,7 @@ import os
 import random
 import subprocess
 import sys
+from datetime import date, timedelta
 
 import pygame
 import wiki_sync
@@ -237,6 +238,7 @@ BESTIARY = {
     "shielder": {"name": "Shielder", "speed": "slow but stubborn", "notes": "A wave 6 defender that carries an orbiting shield that blocks incoming projectiles."},
     "ghost": {"name": "Ghost", "speed": "standard", "notes": "A wave 7 spirit that flashes visible for 10 sec then invisible for 5 sec."},
     "medic": {"name": "Medic", "speed": "standard", "notes": "A wave 9 support enemy that heals nearby allies when they touch."},
+    "present": {"name": "Present", "speed": "standard", "notes": "A surprise enemy that sometimes emerges from gift boxes on the Present Maze."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
 ACHIEVEMENT_POPUPS = []
@@ -704,6 +706,25 @@ MAPS = {
     ],
 }
 
+SEASONAL_MAPS = {
+    "present maze": {
+        "holiday": "Christmas",
+        "start": (12, 24),
+        "end": (12, 26),
+        "path": MAPS["Spiral"],
+        "background": (28, 43, 62),
+        "present_spawn_chance": 0.18,
+        "present_boxes": [
+            (180, 170), (380, 170), (580, 170),
+            (680, 280), (680, 400),
+            (540, 480), (340, 480), (180, 480),
+            (170, 430), (170, 300),
+            (320, 280), (500, 280),
+            (560, 350), (450, 440), (370, 350),
+        ],
+    },
+}
+
 MAP_BACKGROUNDS = {
     "Classic": (20, 25, 35),
     "Loop": (18, 30, 24),
@@ -716,6 +737,12 @@ FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
+SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
+SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
+SEASONAL_DATE_PANEL_RECT = pygame.Rect(WIDTH // 2 - 190, HEIGHT // 2 - 105, 380, 210)
+SEASONAL_DATE_PREVIOUS_RECT = pygame.Rect(WIDTH // 2 - 155, HEIGHT // 2 + 5, 135, 38)
+SEASONAL_DATE_NEXT_RECT = pygame.Rect(WIDTH // 2 + 20, HEIGHT // 2 + 5, 135, 38)
+SEASONAL_DATE_CLOSE_RECT = pygame.Rect(WIDTH // 2 - 55, HEIGHT // 2 + 57, 110, 34)
 ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
 BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
 WIKI_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
@@ -723,6 +750,102 @@ WIKI_GAME_BUTTON_RECT = pygame.Rect(20, 570, 86, 34)
 HOME_BUTTON_RECT = pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2 + 58, 180, 38)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
+
+
+def is_seasonal_map_available(map_name, today=None):
+    seasonal_map = SEASONAL_MAPS.get(map_name)
+    if seasonal_map is None:
+        return False
+    today = today or date.today()
+    current_day = (today.month, today.day)
+    start_day = seasonal_map["start"]
+    end_day = seasonal_map["end"]
+    if start_day <= end_day:
+        return start_day <= current_day <= end_day
+    return current_day >= start_day or current_day <= end_day
+
+
+def get_map_path(map_name):
+    if map_name in MAPS:
+        return MAPS[map_name]
+    return SEASONAL_MAPS[map_name]["path"]
+
+
+def is_map_available_for_play(map_name, today=None):
+    return map_name in MAPS or is_seasonal_map_available(map_name, today)
+
+
+def advance_seasonal_date(current_date, days):
+    return current_date + timedelta(days=days)
+
+
+def draw_seasonal_date_panel(surface, current_date):
+    panel = pygame.Surface(SEASONAL_DATE_PANEL_RECT.size, pygame.SRCALPHA)
+    panel.fill((8, 12, 20, 225))
+    surface.blit(panel, SEASONAL_DATE_PANEL_RECT.topleft)
+    pygame.draw.rect(surface, (205, 180, 230), SEASONAL_DATE_PANEL_RECT, 2, border_radius=10)
+
+    title = FONT.render("Seasonal date override", True, (255, 235, 190))
+    surface.blit(title, title.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 30)))
+    date_text = FONT.render(current_date.strftime("%A, %B %d, %Y"), True, (255, 255, 255))
+    surface.blit(date_text, date_text.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 76)))
+
+    for rect, label in (
+        (SEASONAL_DATE_PREVIOUS_RECT, "< Previous day"),
+        (SEASONAL_DATE_NEXT_RECT, "Next day >"),
+        (SEASONAL_DATE_CLOSE_RECT, "Close"),
+    ):
+        pygame.draw.rect(surface, (85, 105, 145), rect, border_radius=6)
+        pygame.draw.rect(surface, (180, 205, 245), rect, 2, border_radius=6)
+        text = FONT.render(label, True, (255, 255, 255))
+        surface.blit(text, text.get_rect(center=rect.center))
+    return {
+        "previous": SEASONAL_DATE_PREVIOUS_RECT,
+        "next": SEASONAL_DATE_NEXT_RECT,
+        "close": SEASONAL_DATE_CLOSE_RECT,
+    }
+
+
+def draw_seasonal_maps_menu(surface, today=None):
+    today = today or date.today()
+    surface.fill((18, 24, 36))
+    title = FONT.render("Seasonal Maps", True, (255, 235, 180))
+    surface.blit(title, (40, 34))
+    details = FONT.render("Available only during their listed holiday dates (local calendar).", True, (190, 205, 220))
+    surface.blit(details, (40, 68))
+
+    map_buttons = {}
+    if not SEASONAL_MAPS:
+        empty_text = FONT.render("No seasonal maps have been added yet.", True, (220, 220, 220))
+        surface.blit(empty_text, (50, 130))
+        instruction = FONT.render("Tell me which seasonal maps and holidays to add.", True, (170, 190, 210))
+        surface.blit(instruction, (50, 164))
+    else:
+        for index, (map_name, seasonal_map) in enumerate(SEASONAL_MAPS.items()):
+            row = pygame.Rect(40, 112 + index * 64, WIDTH - 80, 52)
+            available = is_seasonal_map_available(map_name, today)
+            row_color = (55, 100, 75) if available else (48, 54, 66)
+            border_color = (160, 225, 175) if available else (105, 115, 130)
+            pygame.draw.rect(surface, row_color, row, border_radius=6)
+            pygame.draw.rect(surface, border_color, row, 2, border_radius=6)
+            name_text = FONT.render(map_name, True, (255, 255, 255))
+            holiday_text = FONT.render(
+                f"{seasonal_map['holiday']} ({seasonal_map['start'][0]:02}/{seasonal_map['start'][1]:02}"
+                f"-{seasonal_map['end'][0]:02}/{seasonal_map['end'][1]:02})",
+                True,
+                (215, 225, 235),
+            )
+            status_text = FONT.render("PLAY" if available else "CLOSED", True, (190, 255, 200) if available else (175, 180, 190))
+            surface.blit(name_text, (row.x + 14, row.y + 5))
+            surface.blit(holiday_text, (row.x + 14, row.y + 28))
+            surface.blit(status_text, (row.right - status_text.get_width() - 14, row.y + 16))
+            map_buttons[map_name] = row
+
+    pygame.draw.rect(surface, (85, 105, 145), SEASONAL_MAPS_BACK_RECT, border_radius=6)
+    pygame.draw.rect(surface, (180, 205, 245), SEASONAL_MAPS_BACK_RECT, 2, border_radius=6)
+    back_text = FONT.render("Back", True, (255, 255, 255))
+    surface.blit(back_text, (SEASONAL_MAPS_BACK_RECT.x + 52, SEASONAL_MAPS_BACK_RECT.y + 9))
+    return map_buttons
 
 
 def load_unlocked_maps():
@@ -1130,6 +1253,14 @@ class Enemy:
             pygame.draw.arc(surface, (65, 105, 120), (center_x - 7, center_y + 7, 14, 12), 0, math.pi, 2)
             pygame.draw.circle(surface, (65, 105, 120), (center_x + 5, center_y + 15), 2)
             eye_color = (255, 255, 220)
+        elif self.type == "present":
+            pygame.draw.rect(surface, (170, 45, 50), (center_x - 13, center_y - 9, 26, 22), border_radius=3)
+            pygame.draw.rect(surface, (225, 75, 65), (center_x - 15, center_y - 12, 30, 7), border_radius=2)
+            pygame.draw.rect(surface, (245, 205, 85), (center_x - 3, center_y - 11, 6, 24))
+            pygame.draw.rect(surface, (245, 205, 85), (center_x - 13, center_y - 3, 26, 4))
+            pygame.draw.ellipse(surface, (245, 205, 85), (center_x - 8, center_y - 17, 8, 6), 2)
+            pygame.draw.ellipse(surface, (245, 205, 85), (center_x, center_y - 17, 8, 6), 2)
+            eye_color = (255, 245, 180)
         else:
             pygame.draw.polygon(
                 surface,
@@ -1839,7 +1970,8 @@ class Game:
     def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
         self.map_name = map_name or self._detect_map_name(path_points)
-        self.background_color = MAP_BACKGROUNDS.get(self.map_name, (20, 25, 35))
+        seasonal_background = SEASONAL_MAPS.get(self.map_name, {}).get("background", (20, 25, 35))
+        self.background_color = MAP_BACKGROUNDS.get(self.map_name, seasonal_background)
         self.sandbox = sandbox
         self.developer_mode = False
         self.developer_code = "sick_man"
@@ -2642,6 +2774,11 @@ class Game:
             enemy_type = "flyer"
         elif self.wave_index >= 2 and (self.spawned + 1) % 5 == 0:
             enemy_type = "shooter"
+        present_box = None
+        seasonal_map = SEASONAL_MAPS.get(self.map_name)
+        if seasonal_map and random.random() < seasonal_map["present_spawn_chance"]:
+            enemy_type = "present"
+            present_box = random.choice(seasonal_map["present_boxes"])
         speed = wave["speed"]
         if enemy_type == "flyer":
             speed *= 1.2
@@ -2652,6 +2789,26 @@ class Game:
         hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.2 if enemy_type == "shielder" else 1.0))
         reward = wave["reward"] + (8 if enemy_type == "flyer" else 0) + (10 if enemy_type == "shooter" else 0) + (15 if enemy_type == "lightning" else 0) + (18 if enemy_type == "shielder" else 0) + (20 if enemy_type == "ghost" else 0) + (25 if enemy_type == "medic" else 0)
         enemy = Enemy(self.path_points, speed=speed, hp=hp, reward=reward, enemy_type=enemy_type)
+        if present_box is not None:
+            closest_distance = float("inf")
+            for segment, (start, end) in enumerate(zip(self.path_points, self.path_points[1:])):
+                start_x, start_y = start
+                end_x, end_y = end
+                dx = end_x - start_x
+                dy = end_y - start_y
+                length_squared = dx * dx + dy * dy
+                progress = 0.0 if length_squared == 0 else (
+                    (present_box[0] - start_x) * dx + (present_box[1] - start_y) * dy
+                ) / length_squared
+                progress = max(0.0, min(1.0, progress))
+                spawn_x = start_x + progress * dx
+                spawn_y = start_y + progress * dy
+                distance = math.hypot(present_box[0] - spawn_x, present_box[1] - spawn_y)
+                if distance < closest_distance:
+                    closest_distance = distance
+                    enemy.segment = segment
+                    enemy.x = spawn_x
+                    enemy.y = spawn_y
         self.enemies.append(enemy)
         self.spawned += 1
 
@@ -2947,7 +3104,7 @@ class Game:
                 pygame.draw.polygon(surface, (245, 210, 125), [inner_tip, inner_left, inner_right])
 
     def draw_grid(self, surface):
-        if self.map_name == "Spiral":
+        if self.map_name == "Spiral" or self.map_name in SEASONAL_MAPS:
             return
         for x in range(0, WIDTH, GRID_SIZE):
             pygame.draw.line(surface, (40, 40, 40), (x, 0), (x, HEIGHT))
@@ -2985,6 +3142,19 @@ class Game:
                 flower_size = 5 + ((x + y) % 4)
                 pygame.draw.circle(surface, (190, 210, 110), (plant_x, plant_y - stem_len - 3), flower_size)
                 pygame.draw.circle(surface, (120, 170, 90), (plant_x, plant_y - stem_len - 3), max(2, flower_size // 2))
+
+    def draw_present_boxes(self, surface):
+        seasonal_map = SEASONAL_MAPS.get(self.map_name)
+        if seasonal_map is None:
+            return
+        for box_x, box_y in seasonal_map["present_boxes"]:
+            pygame.draw.ellipse(surface, (18, 30, 42), (box_x - 17, box_y + 10, 34, 9))
+            pygame.draw.rect(surface, (155, 40, 50), (box_x - 14, box_y - 8, 28, 22), border_radius=3)
+            pygame.draw.rect(surface, (205, 55, 60), (box_x - 17, box_y - 13, 34, 8), border_radius=3)
+            pygame.draw.rect(surface, (245, 205, 85), (box_x - 3, box_y - 12, 6, 25))
+            pygame.draw.rect(surface, (245, 205, 85), (box_x - 14, box_y - 2, 28, 4))
+            pygame.draw.ellipse(surface, (245, 205, 85), (box_x - 10, box_y - 19, 10, 7), 2)
+            pygame.draw.ellipse(surface, (245, 205, 85), (box_x, box_y - 19, 10, 7), 2)
 
     def draw_placement_preview(self, surface, mouse_pos):
         if self.game_over:
@@ -3044,6 +3214,8 @@ class Game:
         self.draw_path(surface)
         if self.map_name == "Spiral":
             self.draw_grass_texture(surface)
+        elif self.map_name in SEASONAL_MAPS:
+            self.draw_present_boxes(surface)
 
         for tower in self.towers:
             tower.draw(surface)
@@ -3496,6 +3668,19 @@ def draw_wiki_button(surface, rect=WIKI_BUTTON_RECT):
     surface.blit(label, label.get_rect(center=rect.center))
 
 
+def draw_seasonal_maps_button(surface):
+    pygame.draw.rect(surface, (105, 78, 125), SEASONAL_MAPS_BUTTON_RECT, border_radius=7)
+    pygame.draw.rect(surface, (210, 175, 235), SEASONAL_MAPS_BUTTON_RECT, 2, border_radius=7)
+    label = FONT.render("Seasonal Maps", True, (255, 255, 255))
+    surface.blit(
+        label,
+        (
+            SEASONAL_MAPS_BUTTON_RECT.centerx - label.get_width() // 2,
+            SEASONAL_MAPS_BUTTON_RECT.centery - label.get_height() // 2,
+        ),
+    )
+
+
 def bestiary_scroll_limit(surface_height):
     content_bottom = 92 + (len(BESTIARY) - 1) * 90 + 76
     return max(0, content_bottom - (surface_height - 14))
@@ -3577,6 +3762,13 @@ def draw_bestiary_window(surface, scroll_offset=0):
             pygame.draw.line(surface, (65, 105, 120), (center_x - 8, center_y + 2), (center_x - 5, center_y + 12), 2)
             pygame.draw.arc(surface, (65, 105, 120), (center_x - 7, center_y + 7, 14, 12), 0, math.pi, 2)
             pygame.draw.circle(surface, (65, 105, 120), (center_x + 5, center_y + 15), 2)
+        elif enemy_id == "present":
+            pygame.draw.rect(surface, (170, 45, 50), (center_x - 13, center_y - 9, 26, 22), border_radius=3)
+            pygame.draw.rect(surface, (225, 75, 65), (center_x - 15, center_y - 12, 30, 7), border_radius=2)
+            pygame.draw.rect(surface, (245, 205, 85), (center_x - 3, center_y - 11, 6, 24))
+            pygame.draw.rect(surface, (245, 205, 85), (center_x - 13, center_y - 3, 26, 4))
+            pygame.draw.ellipse(surface, (245, 205, 85), (center_x - 8, center_y - 17, 8, 6), 2)
+            pygame.draw.ellipse(surface, (245, 205, 85), (center_x, center_y - 17, 8, 6), 2)
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
@@ -3589,6 +3781,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "shielder": (230, 245, 255),
             "ghost": (240, 255, 255),
             "medic": (255, 255, 220),
+            "present": (255, 245, 180),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
         pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
@@ -3692,6 +3885,7 @@ def get_wiki_pages(surface_width=760):
                 "Wave 7 introduces Ghost enemies that turn invisible for five seconds; only Phantom towers can target them while hidden.",
                 "Wave 8 sends a large Flyer force: every second enemy in the wave is a Flyer.",
                 "Wave 9 introduces Medic enemies that heal nearby allies they touch.",
+                "The Present Maze is a Christmas map available December 24-26; some enemies emerge from its present boxes.",
                 "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
             ]),
         ]),
@@ -4332,6 +4526,7 @@ def draw_map_selection(
         draw_achievements_button(surface)
         draw_bestiary_button(surface)
         draw_wiki_button(surface)
+        draw_seasonal_maps_button(surface)
     return costume_buttons
 
 
@@ -4376,9 +4571,14 @@ def main():
     in_menu = True
     show_backstory = False
     show_costume_window = False
+    show_seasonal_menu = False
+    seasonal_date = date.today()
+    seasonal_code_buffer = ""
+    seasonal_date_panel_open = False
     preview_costume = menu_equipped_costume
     running = True
     menu_costume_buttons = {}
+    menu_seasonal_map_buttons = {}
     achievements_process = None
     wiki_process = None
     tower_directory_process = None
@@ -4405,13 +4605,51 @@ def main():
                 menu_hat_text_input = menu_stickman_hat_text
 
         for event in pygame.event.get():
+            if (
+                event.type == pygame.KEYDOWN
+                and event.unicode
+                and event.unicode.isprintable()
+                and not (in_menu and show_costume_window and menu_hat_text_editing)
+            ):
+                seasonal_code = "seasonal_bob"
+                code_candidate = seasonal_code_buffer + event.unicode.lower()
+                if seasonal_code.startswith(code_candidate):
+                    seasonal_code_buffer = code_candidate
+                else:
+                    seasonal_code_buffer = event.unicode.lower() if seasonal_code.startswith(event.unicode.lower()) else ""
+                if seasonal_code_buffer == "seasonal_bob":
+                    seasonal_date_panel_open = True
+                    seasonal_code_buffer = ""
+                    continue
+                if seasonal_code_buffer:
+                    continue
             if event.type == pygame.QUIT:
                 running = False
+            elif seasonal_date_panel_open:
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        seasonal_date_panel_open = False
+                    elif event.key == pygame.K_LEFT:
+                        seasonal_date = advance_seasonal_date(seasonal_date, -1)
+                    elif event.key == pygame.K_RIGHT:
+                        seasonal_date = advance_seasonal_date(seasonal_date, 1)
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if SEASONAL_DATE_PREVIOUS_RECT.collidepoint(event.pos):
+                        seasonal_date = advance_seasonal_date(seasonal_date, -1)
+                    elif SEASONAL_DATE_NEXT_RECT.collidepoint(event.pos):
+                        seasonal_date = advance_seasonal_date(seasonal_date, 1)
+                    elif SEASONAL_DATE_CLOSE_RECT.collidepoint(event.pos):
+                        seasonal_date_panel_open = False
+                continue
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
                     if show_backstory:
                         if event.key == pygame.K_ESCAPE:
                             show_backstory = False
+                        continue
+                    if show_seasonal_menu:
+                        if event.key == pygame.K_ESCAPE:
+                            show_seasonal_menu = False
                         continue
                     if show_costume_window and menu_hat_text_editing:
                         if event.key == pygame.K_ESCAPE:
@@ -4452,10 +4690,14 @@ def main():
                         if game is not None:
                             game.register_key(event.unicode)
                     if event.key == pygame.K_RETURN:
-                        game = Game(MAPS[selected_map], sandbox=sandbox_mode, map_name=selected_map)
+                        if not is_map_available_for_play(selected_map, seasonal_date):
+                            continue
+                        game = Game(get_map_path(selected_map), sandbox=sandbox_mode, map_name=selected_map)
                         in_menu = False
                         if tower_directory_process is None or tower_directory_process.poll() is not None:
                             tower_directory_process = open_tower_directory_window(game.sandbox)
+                    elif event.key == pygame.K_5:
+                        show_seasonal_menu = True
                     elif event.key == pygame.K_s:
                         sandbox_mode = not sandbox_mode
                     elif event.key == pygame.K_1:
@@ -4479,8 +4721,8 @@ def main():
                             game.upgrade_all_towers()
                             game.key_buffer = ""
 
-                    if event.key == pygame.K_r and game.game_over:
-                        game = Game(MAPS[selected_map], sandbox=game.sandbox, map_name=selected_map)
+                    if event.key == pygame.K_r and game.game_over and is_map_available_for_play(selected_map, seasonal_date):
+                        game = Game(get_map_path(selected_map), sandbox=game.sandbox, map_name=selected_map)
                     elif event.key == pygame.K_SPACE:
                         game.toggle_enemy_pause()
                     elif event.key == pygame.K_UP:
@@ -4542,6 +4784,19 @@ def main():
                 if in_menu:
                     if show_backstory:
                         show_backstory = False
+                    elif show_seasonal_menu:
+                        if SEASONAL_MAPS_BACK_RECT.collidepoint(event.pos):
+                            show_seasonal_menu = False
+                        else:
+                            for map_name, rect in menu_seasonal_map_buttons.items():
+                                if rect.collidepoint(event.pos) and is_seasonal_map_available(map_name, seasonal_date):
+                                    selected_map = map_name
+                                    game = Game(get_map_path(map_name), sandbox=sandbox_mode, map_name=map_name)
+                                    in_menu = False
+                                    show_seasonal_menu = False
+                                    if tower_directory_process is None or tower_directory_process.poll() is not None:
+                                        tower_directory_process = open_tower_directory_window(game.sandbox)
+                                    break
                     elif show_costume_window:
                         if HOME_COSTUME_CLOSE_RECT.collidepoint(event.pos):
                             show_costume_window = False
@@ -4704,6 +4959,8 @@ def main():
                                     break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
+                    elif SEASONAL_MAPS_BUTTON_RECT.collidepoint(event.pos):
+                        show_seasonal_menu = True
                     elif ACHIEVEMENTS_BUTTON_RECT.collidepoint(event.pos):
                         if achievements_process is None or achievements_process.poll() is not None:
                             achievements_process = open_achievements_window()
@@ -4748,7 +5005,10 @@ def main():
         if in_menu:
             if show_backstory:
                 draw_backstory(SCREEN)
+            elif show_seasonal_menu:
+                menu_seasonal_map_buttons = draw_seasonal_maps_menu(SCREEN, seasonal_date)
             else:
+                menu_seasonal_map_buttons = {}
                 menu_costume_buttons = draw_map_selection(
                     SCREEN,
                     selected_map,
@@ -4774,9 +5034,12 @@ def main():
                     load_achievements(),
                 )
         else:
-            game.update(dt)
+            if not seasonal_date_panel_open:
+                game.update(dt)
             game.draw(SCREEN)
 
+        if seasonal_date_panel_open:
+            draw_seasonal_date_panel(SCREEN, seasonal_date)
         draw_achievement_popups(SCREEN, achievement_animation_time)
         pygame.display.flip()
 
