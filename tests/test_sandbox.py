@@ -39,35 +39,158 @@ class SandboxModeTest(unittest.TestCase):
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 12, 27)))
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2027, 1, 1)))
 
-    def test_seasonal_date_override_advances_across_months_and_years(self):
-        self.assertEqual(main.advance_seasonal_date(date(2026, 12, 23), 1), date(2026, 12, 24))
-        self.assertEqual(main.advance_seasonal_date(date(2026, 12, 31), 1), date(2027, 1, 1))
-        self.assertEqual(main.advance_seasonal_date(date(2027, 1, 1), -1), date(2026, 12, 31))
-        self.assertTrue(main.is_seasonal_map_available(
-            "present maze", main.advance_seasonal_date(date(2026, 12, 23), 1)
-        ))
-        self.assertTrue(main.is_seasonal_map_available(
-            "present maze", main.advance_seasonal_date(date(2026, 12, 23), 2)
-        ))
+    def test_gobble_gobble_is_available_during_us_thanksgiving_week(self):
+        map_name = "Gobble Gobble"
+        thanksgiving_dates = {
+            2025: date(2025, 11, 27),
+            2026: date(2026, 11, 26),
+            2027: date(2027, 11, 25),
+        }
+        for year, thanksgiving in thanksgiving_dates.items():
+            with self.subTest(year=year):
+                self.assertEqual(main.thanksgiving_date(year), thanksgiving)
+                self.assertTrue(main.is_seasonal_map_available(map_name, thanksgiving - main.timedelta(days=3)))
+                self.assertTrue(main.is_seasonal_map_available(map_name, thanksgiving + main.timedelta(days=3)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, thanksgiving - main.timedelta(days=4)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, thanksgiving + main.timedelta(days=4)))
 
-    def test_seasonal_date_panel_draws_date_controls(self):
+    def test_paint_dash_is_available_on_holi_day(self):
+        map_name = "paint dash"
+        holi_dates = {
+            2025: date(2025, 3, 14),
+            2026: date(2026, 3, 4),
+            2027: date(2027, 3, 22),
+            2028: date(2028, 3, 11),
+        }
+        for year, holi in holi_dates.items():
+            with self.subTest(year=year):
+                self.assertEqual(main.holi_date(year), holi)
+                self.assertTrue(main.is_seasonal_map_available(map_name, holi))
+                self.assertFalse(main.is_seasonal_map_available(map_name, holi - main.timedelta(days=1)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, holi + main.timedelta(days=1)))
+
+    def test_paint_dash_shoots_closest_living_enemy_every_twenty_seconds(self):
+        map_name = "paint dash"
+        game = Game(main.get_map_path(map_name), map_name=map_name)
+        shooter = game.paint_dash
+        farther_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        closest_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        dead_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        farther_enemy.x, farther_enemy.y = 700, 500
+        closest_enemy.x, closest_enemy.y = 150, 100
+        dead_enemy.x, dead_enemy.y = 110, 110
+        dead_enemy.hp = 0
+        game.enemies = [farther_enemy, closest_enemy, dead_enemy]
+        game.enemies_paused = True
+
+        with patch.object(main.random, "uniform", side_effect=[100, 100]):
+            game.update(19.9)
+            self.assertFalse(game.paint_dash.visible_timer)
+            game.update(0.11)
+
+        self.assertEqual(shooter.visible_timer, 2.0)
+        self.assertEqual(len(game.projectiles), 1)
+        self.assertIsInstance(game.projectiles[0], main.PaintballProjectile)
+        self.assertIs(game.projectiles[0].target, closest_enemy)
+        self.assertEqual(game.projectiles[0].damage, 30)
+
+    def test_paint_dash_uses_classic_path_and_only_appears_on_its_map(self):
+        paint_dash = Game(main.get_map_path("paint dash"), map_name="paint dash")
+        classic = Game(MAPS["Classic"])
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
 
-        buttons = main.draw_seasonal_date_panel(surface, date(2026, 12, 25))
+        self.assertEqual(paint_dash.path_points, MAPS["Classic"])
+        self.assertIsNotNone(paint_dash.paint_dash)
+        self.assertIsNone(classic.paint_dash)
+        paint_dash.paint_dash.visible_timer = 1.0
+        paint_dash.draw(surface)
 
-        self.assertEqual(set(buttons), {"previous", "next", "close"})
-        self.assertTrue(buttons["previous"].collidepoint(buttons["previous"].center))
-        self.assertTrue(buttons["next"].collidepoint(buttons["next"].center))
+        self.assertEqual(paint_dash.background_color, (72, 48, 62))
+
+    def test_gobble_gobble_reuses_classic_path_and_has_a_turkey(self):
+        map_name = "Gobble Gobble"
+        game = Game(main.get_map_path(map_name), map_name=map_name)
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertIsNotNone(game.turkey)
+        game.draw(surface)
+        self.assertEqual(surface.get_at((420, 330))[:3], (125, 70, 42))
+
+        game.spawn_enemy()
+        self.assertEqual(game.enemies[0].type, "ground")
+
+    def test_turkey_eats_touching_towers_and_enemies(self):
+        turkey = main.Turkey()
+        turkey.x, turkey.y = 200, 200
+        tower = Tower(200, 200, "basic")
+        enemy = Enemy([(100, 100), (300, 100)], speed=0, hp=100, reward=1)
+        enemy.x, enemy.y = 200, 200
+        towers = [tower]
+        enemies = [enemy]
+        turkey.target_timer = 100
+        turkey.target = tower
+
+        turkey.update(0.1, towers, enemies)
+        self.assertEqual(towers, [])
+        self.assertEqual(enemies, [enemy])
+        self.assertIsNone(turkey.target)
+        self.assertEqual(turkey.eating_timer, turkey.eating_duration)
+
+        turkey.update(0.4, towers, enemies)
+        self.assertAlmostEqual(turkey.eating_timer, turkey.eating_duration - 0.4)
+        turkey.eat_cooldown = 0
+        turkey.target_timer = 100
+        turkey.target = enemy
+        turkey.eating_timer = 0
+        turkey.update(0.1, towers, enemies)
+        self.assertLessEqual(enemy.hp, 0)
+        self.assertEqual(turkey.eating_timer, turkey.eating_duration)
+
+    def test_turkey_draws_a_different_pose_during_eating_animation(self):
+        turkey = main.Turkey()
+        turkey.x, turkey.y = 200, 200
+        idle_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        eating_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        turkey.draw(idle_surface)
+        turkey.eating_timer = turkey.eating_duration * 0.75
+        turkey.draw(eating_surface)
+
+        self.assertNotEqual(
+            pygame.image.tobytes(idle_surface, "RGB"),
+            pygame.image.tobytes(eating_surface, "RGB"),
+        )
+
+    def test_calendar_month_navigation_wraps_year_boundaries(self):
+        self.assertEqual(main.shift_calendar_month(date(2026, 12, 1), 1), date(2027, 1, 1))
+        self.assertEqual(main.shift_calendar_month(date(2027, 1, 1), -1), date(2026, 12, 1))
+        self.assertEqual(main.shift_calendar_month(date(2026, 6, 1), 12), date(2027, 6, 1))
+
+    def test_seasonal_date_panel_draws_calendar_days_and_month_controls(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        buttons = main.draw_seasonal_date_panel(
+            surface, date(2028, 2, 25), date(2028, 2, 1)
+        )
+
+        self.assertEqual(set(buttons), {"previous_month", "next_month", "close", "days"})
+        self.assertEqual(len(buttons["days"]), 29)
+        self.assertTrue(buttons["days"][25].collidepoint(buttons["days"][25].center))
+        self.assertTrue(buttons["previous_month"].collidepoint(buttons["previous_month"].center))
+        self.assertTrue(buttons["next_month"].collidepoint(buttons["next_month"].center))
 
     def test_seasonal_maps_menu_shows_present_maze_when_closed(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
 
         buttons = main.draw_seasonal_maps_menu(surface, date(2026, 12, 25))
 
-        self.assertEqual(set(buttons), {"present maze"})
+        self.assertEqual(set(buttons), {"present maze", "Gobble Gobble", "paint dash"})
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
+        self.assertEqual(main.SEASONAL_MAPS["Gobble Gobble"]["holiday"], "Thanksgiving")
+        self.assertEqual(main.SEASONAL_MAPS["paint dash"]["holiday"], "Holi")
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"
@@ -1212,6 +1335,19 @@ class SandboxModeTest(unittest.TestCase):
         ]:
             game.register_key(key)
         self.assertTrue(game.developer_mode)
+
+    def test_cheat_codes_work_on_seasonal_maps(self):
+        game = Game(main.get_map_path("Gobble Gobble"), map_name="Gobble Gobble")
+
+        for key in "sick_man":
+            game.register_cheat_key(key)
+        self.assertTrue(game.developer_mode)
+
+        with patch.object(game, "upgrade_all_towers") as upgrade_all_towers:
+            for key in "soft&ball":
+                game.register_cheat_key(key)
+
+        upgrade_all_towers.assert_called_once_with()
 
     def test_developer_mode_only_controls_enemy_pause(self):
         game = Game(MAPS["Classic"])

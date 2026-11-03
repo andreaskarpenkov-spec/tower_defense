@@ -1,10 +1,11 @@
+import calendar
 import json
 import math
 import os
 import random
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pygame
 import wiki_sync
@@ -709,10 +710,12 @@ MAPS = {
 SEASONAL_MAPS = {
     "present maze": {
         "holiday": "Christmas",
+        "availability_label": "December 24-26",
         "start": (12, 24),
         "end": (12, 26),
         "path": MAPS["Spiral"],
         "background": (28, 43, 62),
+        "no_grid": True,
         "present_spawn_chance": 0.18,
         "present_boxes": [
             (180, 170), (380, 170), (580, 170),
@@ -722,6 +725,22 @@ SEASONAL_MAPS = {
             (320, 280), (500, 280),
             (560, 350), (450, 440), (370, 350),
         ],
+    },
+    "Gobble Gobble": {
+        "holiday": "Thanksgiving",
+        "availability_rule": "thanksgiving_week",
+        "availability_label": "Thanksgiving week (Monday-Sunday)",
+        "path": MAPS["Classic"],
+        "background": (65, 53, 38),
+        "turkey": True,
+    },
+    "paint dash": {
+        "holiday": "Holi",
+        "availability_rule": "holi_day",
+        "availability_label": "Holi day (India)",
+        "path": MAPS["Classic"],
+        "background": (72, 48, 62),
+        "paint_dash": True,
     },
 }
 
@@ -739,10 +758,11 @@ BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
 SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
-SEASONAL_DATE_PANEL_RECT = pygame.Rect(WIDTH // 2 - 190, HEIGHT // 2 - 105, 380, 210)
-SEASONAL_DATE_PREVIOUS_RECT = pygame.Rect(WIDTH // 2 - 155, HEIGHT // 2 + 5, 135, 38)
-SEASONAL_DATE_NEXT_RECT = pygame.Rect(WIDTH // 2 + 20, HEIGHT // 2 + 5, 135, 38)
-SEASONAL_DATE_CLOSE_RECT = pygame.Rect(WIDTH // 2 - 55, HEIGHT // 2 + 57, 110, 34)
+SEASONAL_DATE_PANEL_RECT = pygame.Rect(WIDTH // 2 - 210, HEIGHT // 2 - 220, 420, 440)
+SEASONAL_DATE_PREVIOUS_MONTH_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 - 148, 42, 34)
+SEASONAL_DATE_NEXT_MONTH_RECT = pygame.Rect(WIDTH // 2 + 128, HEIGHT // 2 - 148, 42, 34)
+SEASONAL_DATE_CLOSE_RECT = pygame.Rect(WIDTH // 2 - 55, HEIGHT // 2 + 173, 110, 34)
+SEASONAL_DATE_GRID_RECT = pygame.Rect(WIDTH // 2 - 147, HEIGHT // 2 - 102, 294, 240)
 ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
 BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
 WIKI_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
@@ -757,12 +777,101 @@ def is_seasonal_map_available(map_name, today=None):
     if seasonal_map is None:
         return False
     today = today or date.today()
+    if seasonal_map.get("availability_rule") == "thanksgiving_week":
+        thanksgiving = thanksgiving_date(today.year)
+        return thanksgiving - timedelta(days=3) <= today <= thanksgiving + timedelta(days=3)
+    if seasonal_map.get("availability_rule") == "holi_day":
+        return today == holi_date(today.year)
     current_day = (today.month, today.day)
     start_day = seasonal_map["start"]
     end_day = seasonal_map["end"]
     if start_day <= end_day:
         return start_day <= current_day <= end_day
     return current_day >= start_day or current_day <= end_day
+
+
+def thanksgiving_date(year):
+    thursdays = [
+        week[calendar.THURSDAY]
+        for week in calendar.monthcalendar(year, 11)
+        if week[calendar.THURSDAY]
+    ]
+    return date(year, 11, thursdays[3])
+
+
+def holi_date(year):
+    observed_dates = {
+        2025: date(2025, 3, 14),
+        2026: date(2026, 3, 4),
+        2027: date(2027, 3, 22),
+        2028: date(2028, 3, 11),
+    }
+    if year in observed_dates:
+        return observed_dates[year]
+
+    target = datetime(year, 3, 15, 12)
+    target_julian_day = 2451545 + (target - datetime(2000, 1, 1, 12)).total_seconds() / 86400
+    phase_index = round((target_julian_day - 2451550.09766) / 29.530588861 - 0.5) + 0.5
+    full_moons = []
+    for offset in range(-2, 3):
+        k = phase_index + offset
+        t = k / 1236.85
+        eccentricity = 1 - 0.002516 * t - 0.0000074 * t * t
+        mean_anomaly = math.radians(
+            2.5534 + 29.1053567 * k - 0.0000014 * t * t - 0.00000011 * t**3
+        )
+        moon_anomaly = math.radians(
+            201.5643 + 385.81693528 * k + 0.0107582 * t * t
+            + 0.00001238 * t**3 - 0.000000058 * t**4
+        )
+        latitude_argument = math.radians(
+            160.7108 + 390.67050284 * k - 0.0016118 * t * t
+            - 0.00000227 * t**3 + 0.000000011 * t**4
+        )
+        ascending_node = math.radians(
+            124.7746 - 1.56375588 * k + 0.0020672 * t * t + 0.00000215 * t**3
+        )
+        correction = (
+            -0.40614 * math.sin(moon_anomaly)
+            + 0.17302 * eccentricity * math.sin(mean_anomaly)
+            + 0.01614 * math.sin(2 * moon_anomaly)
+            + 0.01043 * math.sin(2 * latitude_argument)
+            + 0.00734 * eccentricity * math.sin(moon_anomaly - mean_anomaly)
+            - 0.00515 * eccentricity * math.sin(moon_anomaly + mean_anomaly)
+            + 0.00209 * eccentricity**2 * math.sin(2 * mean_anomaly)
+            - 0.00111 * math.sin(moon_anomaly - 2 * latitude_argument)
+            - 0.00057 * math.sin(moon_anomaly + 2 * latitude_argument)
+            + 0.00056 * eccentricity * math.sin(2 * moon_anomaly + mean_anomaly)
+            - 0.00042 * math.sin(3 * moon_anomaly)
+            + 0.00042 * eccentricity * math.sin(mean_anomaly + 2 * latitude_argument)
+            + 0.00038 * eccentricity * math.sin(mean_anomaly - 2 * latitude_argument)
+            - 0.00024 * eccentricity * math.sin(2 * moon_anomaly - mean_anomaly)
+            - 0.00017 * math.sin(ascending_node)
+            - 0.00007 * math.sin(moon_anomaly + 2 * mean_anomaly)
+            + 0.00004 * math.sin(2 * moon_anomaly - 2 * latitude_argument)
+            + 0.00004 * math.sin(3 * mean_anomaly)
+            + 0.00003 * math.sin(moon_anomaly + mean_anomaly - 2 * latitude_argument)
+            + 0.00003 * math.sin(2 * moon_anomaly + 2 * latitude_argument)
+            - 0.00003 * math.sin(moon_anomaly + mean_anomaly + 2 * latitude_argument)
+            + 0.00003 * math.sin(moon_anomaly - mean_anomaly + 2 * latitude_argument)
+            - 0.00002 * math.sin(moon_anomaly - mean_anomaly - 2 * latitude_argument)
+            - 0.00002 * math.sin(3 * mean_anomaly + moon_anomaly)
+            + 0.00002 * math.sin(4 * moon_anomaly)
+        )
+        julian_day = (
+            2451550.09766 + 29.530588861 * k + 0.00015437 * t * t
+            - 0.000000150 * t**3 + 0.00000000073 * t**4 + correction
+        )
+        full_moon_utc = datetime(2000, 1, 1, 12) + timedelta(days=julian_day - 2451545)
+        full_moon_india = full_moon_utc + timedelta(hours=5, minutes=30)
+        if date(year, 2, 15) <= full_moon_india.date() <= date(year, 4, 15):
+            holi_day = full_moon_india.date()
+            if full_moon_india.hour >= 16:
+                holi_day += timedelta(days=1)
+            full_moons.append((abs((holi_day - date(year, 3, 15)).days), holi_day))
+    if not full_moons:
+        raise ValueError(f"Could not determine Holi date for {year}")
+    return min(full_moons)[1]
 
 
 def get_map_path(map_name):
@@ -775,35 +884,73 @@ def is_map_available_for_play(map_name, today=None):
     return map_name in MAPS or is_seasonal_map_available(map_name, today)
 
 
-def advance_seasonal_date(current_date, days):
-    return current_date + timedelta(days=days)
+def shift_calendar_month(current_month, months):
+    month_index = current_month.year * 12 + current_month.month - 1 + months
+    year, month_index = divmod(month_index, 12)
+    return date(year, month_index + 1, 1)
 
 
-def draw_seasonal_date_panel(surface, current_date):
+def draw_seasonal_date_panel(surface, current_date, calendar_month=None):
+    calendar_month = calendar_month or current_date.replace(day=1)
     panel = pygame.Surface(SEASONAL_DATE_PANEL_RECT.size, pygame.SRCALPHA)
     panel.fill((8, 12, 20, 225))
     surface.blit(panel, SEASONAL_DATE_PANEL_RECT.topleft)
     pygame.draw.rect(surface, (205, 180, 230), SEASONAL_DATE_PANEL_RECT, 2, border_radius=10)
 
-    title = FONT.render("Seasonal date override", True, (255, 235, 190))
-    surface.blit(title, title.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 30)))
-    date_text = FONT.render(current_date.strftime("%A, %B %d, %Y"), True, (255, 255, 255))
-    surface.blit(date_text, date_text.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 76)))
+    title = FONT.render("Select an in-game date", True, (255, 235, 190))
+    surface.blit(title, title.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 28)))
+    month_label = FONT.render(calendar_month.strftime("%B %Y"), True, (255, 255, 255))
+    surface.blit(month_label, month_label.get_rect(center=(SEASONAL_DATE_PANEL_RECT.centerx, SEASONAL_DATE_PANEL_RECT.y + 72)))
 
-    for rect, label in (
-        (SEASONAL_DATE_PREVIOUS_RECT, "< Previous day"),
-        (SEASONAL_DATE_NEXT_RECT, "Next day >"),
-        (SEASONAL_DATE_CLOSE_RECT, "Close"),
+    buttons = {}
+    for key, rect, label in (
+        ("previous_month", SEASONAL_DATE_PREVIOUS_MONTH_RECT, "<"),
+        ("next_month", SEASONAL_DATE_NEXT_MONTH_RECT, ">"),
+        ("close", SEASONAL_DATE_CLOSE_RECT, "Close"),
     ):
         pygame.draw.rect(surface, (85, 105, 145), rect, border_radius=6)
         pygame.draw.rect(surface, (180, 205, 245), rect, 2, border_radius=6)
         text = FONT.render(label, True, (255, 255, 255))
         surface.blit(text, text.get_rect(center=rect.center))
-    return {
-        "previous": SEASONAL_DATE_PREVIOUS_RECT,
-        "next": SEASONAL_DATE_NEXT_RECT,
-        "close": SEASONAL_DATE_CLOSE_RECT,
-    }
+        buttons[key] = rect
+
+    cell_width = SEASONAL_DATE_GRID_RECT.width // 7
+    cell_height = SEASONAL_DATE_GRID_RECT.height // 6
+    for weekday_index, weekday in enumerate(calendar.day_abbr):
+        weekday_text = FONT.render(weekday, True, (175, 195, 220))
+        weekday_rect = weekday_text.get_rect(
+            center=(SEASONAL_DATE_GRID_RECT.x + weekday_index * cell_width + cell_width // 2,
+                    SEASONAL_DATE_GRID_RECT.y - 20)
+        )
+        surface.blit(weekday_text, weekday_rect)
+
+    first_weekday, days_in_month = calendar.monthrange(calendar_month.year, calendar_month.month)
+    day_buttons = {}
+    for day in range(1, days_in_month + 1):
+        cell_index = first_weekday + day - 1
+        row, column = divmod(cell_index, 7)
+        rect = pygame.Rect(
+            SEASONAL_DATE_GRID_RECT.x + column * cell_width + 2,
+            SEASONAL_DATE_GRID_RECT.y + row * cell_height + 2,
+            cell_width - 4,
+            cell_height - 4,
+        )
+        selected = (
+            calendar_month.year == current_date.year
+            and calendar_month.month == current_date.month
+            and day == current_date.day
+        )
+        day_date = date(calendar_month.year, calendar_month.month, day)
+        seasonal_day = any(is_seasonal_map_available(name, day_date) for name in SEASONAL_MAPS)
+        fill = (105, 78, 125) if selected else (74, 105, 82) if seasonal_day else (48, 58, 75)
+        border = (225, 195, 245) if selected else (150, 210, 160) if seasonal_day else (95, 110, 135)
+        pygame.draw.rect(surface, fill, rect, border_radius=4)
+        pygame.draw.rect(surface, border, rect, 1, border_radius=4)
+        day_text = FONT.render(str(day), True, (255, 255, 255))
+        surface.blit(day_text, day_text.get_rect(center=rect.center))
+        day_buttons[day] = rect
+    buttons["days"] = day_buttons
+    return buttons
 
 
 def draw_seasonal_maps_menu(surface, today=None):
@@ -829,12 +976,12 @@ def draw_seasonal_maps_menu(surface, today=None):
             pygame.draw.rect(surface, row_color, row, border_radius=6)
             pygame.draw.rect(surface, border_color, row, 2, border_radius=6)
             name_text = FONT.render(map_name, True, (255, 255, 255))
-            holiday_text = FONT.render(
-                f"{seasonal_map['holiday']} ({seasonal_map['start'][0]:02}/{seasonal_map['start'][1]:02}"
-                f"-{seasonal_map['end'][0]:02}/{seasonal_map['end'][1]:02})",
-                True,
-                (215, 225, 235),
-            )
+            window_label = seasonal_map.get("availability_label")
+            if window_label is None:
+                start = seasonal_map["start"]
+                end = seasonal_map["end"]
+                window_label = f"{start[0]:02}/{start[1]:02}-{end[0]:02}/{end[1]:02}"
+            holiday_text = FONT.render(f"{seasonal_map['holiday']} ({window_label})", True, (215, 225, 235))
             status_text = FONT.render("PLAY" if available else "CLOSED", True, (190, 255, 200) if available else (175, 180, 190))
             surface.blit(name_text, (row.x + 14, row.y + 5))
             surface.blit(holiday_text, (row.x + 14, row.y + 28))
@@ -1632,6 +1779,81 @@ class Projectile:
         pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), 5)
 
 
+class PaintballProjectile(Projectile):
+    def draw(self, surface):
+        center = (int(self.x), int(self.y))
+        pygame.draw.circle(surface, (245, 245, 235), center, 7)
+        pygame.draw.circle(surface, self.color, center, 5)
+        pygame.draw.circle(surface, (255, 255, 255), (center[0] - 1, center[1] - 2), 2)
+
+
+class PaintDashShooter:
+    COLORS = ((255, 70, 130), (255, 190, 45), (90, 220, 130), (90, 170, 255), (180, 90, 230))
+
+    def __init__(self):
+        self.spawn_timer = 20.0
+        self.visible_timer = 0.0
+        self.x = WIDTH / 2
+        self.y = HEIGHT / 2
+        self.direction = 1
+
+    def update(self, dt, enemies, projectiles):
+        self.visible_timer = max(0.0, self.visible_timer - dt)
+        self.spawn_timer -= dt
+        if self.spawn_timer > 0:
+            return
+
+        self.spawn_timer += 20.0
+        self.x = random.uniform(55, WIDTH - 55)
+        self.y = random.uniform(95, HEIGHT - 75)
+        self.visible_timer = 2.0
+        targets = [
+            enemy for enemy in enemies
+            if not enemy.is_dead() and not enemy.reached_goal()
+        ]
+        if not targets:
+            return
+        target = min(targets, key=lambda enemy: math.hypot(enemy.x - self.x, enemy.y - self.y))
+        self.direction = 1 if target.x >= self.x else -1
+        projectiles.append(
+            PaintballProjectile(
+                self.x + self.direction * 16,
+                self.y - 12,
+                target,
+                damage=30,
+                color=random.choice(self.COLORS),
+                speed=600,
+            )
+        )
+
+    def draw(self, surface):
+        if self.visible_timer <= 0:
+            return
+        x, y = round(self.x), round(self.y)
+        facing = self.direction
+        ink = (250, 250, 250)
+        pygame.draw.circle(surface, (225, 185, 110), (x, y - 22), 9)
+        pygame.draw.circle(surface, ink, (x, y - 22), 9, 2)
+        pygame.draw.ellipse(surface, (25, 25, 35), (x - 18, y - 35, 36, 7))
+        pygame.draw.rect(surface, (80, 55, 45), (x - 15, y - 48, 30, 15), border_radius=3)
+        pygame.draw.rect(surface, (180, 65, 75), (x - 15, y - 37, 30, 5))
+        pygame.draw.line(surface, ink, (x, y - 13), (x, y + 12), 3)
+        pygame.draw.line(surface, ink, (x, y - 5), (x - facing * 13, y + 5), 3)
+        pygame.draw.line(surface, ink, (x, y - 5), (x + facing * 13, y - 12), 3)
+        pygame.draw.line(surface, ink, (x, y + 12), (x - 10, y + 29), 3)
+        pygame.draw.line(surface, ink, (x, y + 12), (x + 10, y + 29), 3)
+        gun_x = x + facing * 16
+        gun_y = y - 12
+        pygame.draw.line(surface, (45, 50, 60), (x + facing * 8, y - 8), (gun_x, gun_y), 4)
+        pygame.draw.rect(
+            surface,
+            (65, 75, 90),
+            (gun_x if facing > 0 else gun_x - 17, gun_y - 4, 17, 8),
+            border_radius=2,
+        )
+        pygame.draw.circle(surface, (100, 220, 245), (gun_x + facing * 5, gun_y), 2)
+
+
 class FreezeProjectile(Projectile):
     def __init__(self, x, y, target, damage, color, speed=420, slow_amount=0.4, slow_time=2.2):
         super().__init__(x, y, target, damage, color, speed)
@@ -1966,6 +2188,120 @@ class Walker:
         pygame.draw.circle(surface, (255, 255, 255), (int(self.x), int(self.y)), 4)
 
 
+class Turkey:
+    def __init__(self):
+        self.x = WIDTH / 2
+        self.y = HEIGHT / 2
+        self.direction = 1
+        self.speed = 90
+        self.radius = 22
+        self.target = None
+        self.target_timer = 2.0
+        self.eat_cooldown = 0.0
+        self.eating_duration = 1.2
+        self.eating_timer = 0.0
+        self.roam_x = random.uniform(60, WIDTH - 60)
+        self.roam_y = random.uniform(60, HEIGHT - 60)
+
+    def update(self, dt, towers, enemies):
+        self.eat_cooldown = max(0.0, self.eat_cooldown - dt)
+        self.eating_timer = max(0.0, self.eating_timer - dt)
+        if self.eating_timer > 0:
+            return
+
+        if self.target is not None and self.target not in towers and self.target not in enemies:
+            self.target = None
+        self.target_timer -= dt
+        if self.target is None and self.target_timer <= 0:
+            targets = list(towers) + [
+                enemy for enemy in enemies
+                if not enemy.is_dead() and not enemy.reached_goal()
+            ]
+            if targets:
+                self.target = random.choice(targets)
+            self.target_timer = random.uniform(6.0, 10.0)
+
+        if self.target is not None:
+            target_x, target_y = self.target.x, self.target.y
+        else:
+            target_x, target_y = self.roam_x, self.roam_y
+            if math.hypot(target_x - self.x, target_y - self.y) <= 8:
+                self.roam_x = random.uniform(60, WIDTH - 60)
+                self.roam_y = random.uniform(60, HEIGHT - 60)
+                target_x, target_y = self.roam_x, self.roam_y
+
+        dx = target_x - self.x
+        dy = target_y - self.y
+        distance = math.hypot(dx, dy)
+        if distance > 0:
+            step = min(self.speed * dt, distance)
+            self.x += dx / distance * step
+            self.y += dy / distance * step
+            self.direction = 1 if dx >= 0 else -1
+
+        if (
+            self.target is not None
+            and self.eat_cooldown <= 0
+            and math.hypot(self.target.x - self.x, self.target.y - self.y) <= self.radius + 8
+        ):
+            if self.target in towers:
+                towers.remove(self.target)
+            elif self.target in enemies:
+                self.target.hp = 0
+            self.target = None
+            self.eat_cooldown = 6.0
+            self.target_timer = self.eat_cooldown
+            self.eating_timer = self.eating_duration
+
+    def draw(self, surface):
+        center_x, center_y = round(self.x), round(self.y)
+        facing = self.direction
+        eating_progress = self.eating_duration - self.eating_timer
+        peck = abs(math.sin(eating_progress * math.pi)) if self.eating_timer > 0 else 0
+        body_y = center_y + round(peck * 2)
+        tail_x = center_x - facing * 13
+        for offset, color in zip((-14, 0, 14), ((175, 55, 45), (220, 135, 45), (190, 85, 40))):
+            pygame.draw.polygon(surface, color, [
+                (tail_x, body_y),
+                (tail_x - facing * 19, body_y + offset - 8),
+                (tail_x - facing * 22, body_y + offset + 8),
+            ])
+        pygame.draw.ellipse(surface, (125, 70, 42), (center_x - 17, body_y - 10, 34, 24))
+        pygame.draw.ellipse(surface, (165, 100, 55), (center_x - 7, body_y - 17, 25, 20))
+        head_x = center_x + facing * 15
+        head_y = body_y - 14 + round(peck * 6)
+        pygame.draw.circle(surface, (165, 100, 55), (head_x, head_y), 8)
+        beak_tip_x = head_x + facing * (18 if peck > 0 else 15)
+        beak_open = round(peck * 7)
+        pygame.draw.polygon(surface, (235, 180, 55), [
+            (head_x + facing * 6, head_y),
+            (beak_tip_x, head_y + 1),
+            (head_x + facing * 6, head_y + 3),
+        ])
+        if beak_open:
+            pygame.draw.polygon(surface, (55, 35, 25), [
+                (head_x + facing * 6, head_y + 3),
+                (beak_tip_x, head_y + 1 + beak_open),
+                (head_x + facing * 6, head_y + 5),
+            ])
+            pygame.draw.polygon(surface, (235, 180, 55), [
+                (head_x + facing * 6, head_y + 5),
+                (beak_tip_x, head_y + 1 + beak_open),
+                (head_x + facing * 6, head_y + 3 + beak_open),
+            ])
+            pygame.draw.circle(
+                surface,
+                (245, 220, 150),
+                (head_x + facing * 18, head_y + 5 + beak_open),
+                2,
+            )
+        pygame.draw.ellipse(surface, (185, 45, 50), (head_x + facing * 3, head_y + 3, 5, 10))
+        pygame.draw.circle(surface, (255, 245, 220), (head_x + facing * 2, head_y - 2), 2)
+        pygame.draw.circle(surface, (35, 25, 20), (head_x + facing * 3, head_y - 2), 1)
+        pygame.draw.line(surface, (225, 175, 65), (center_x - 7, body_y + 9), (center_x - 9, body_y + 16), 2)
+        pygame.draw.line(surface, (225, 175, 65), (center_x + 7, body_y + 9), (center_x + 9, body_y + 16), 2)
+
+
 class Game:
     def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
@@ -1982,6 +2318,8 @@ class Game:
         self.projectiles = []
         self.explosions = []
         self.mines = []
+        self.turkey = Turkey() if SEASONAL_MAPS.get(self.map_name, {}).get("turkey") else None
+        self.paint_dash = PaintDashShooter() if SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash") else None
         self.money = START_MONEY
         self.lives = START_LIVES
         self.wave_index = 0
@@ -2222,6 +2560,17 @@ class Game:
                 achievements=self.achievements,
             )
             self.developer_buffer = ""
+
+    def register_cheat_key(self, key):
+        self.register_key(key)
+        if self.game_over:
+            return
+        self.key_buffer += key
+        if len(self.key_buffer) > 12:
+            self.key_buffer = self.key_buffer[-12:]
+        if "soft&ball" in self.key_buffer.lower():
+            self.upgrade_all_towers()
+            self.key_buffer = ""
 
     def toggle_enemy_pause(self):
         if self.developer_mode:
@@ -2776,7 +3125,11 @@ class Game:
             enemy_type = "shooter"
         present_box = None
         seasonal_map = SEASONAL_MAPS.get(self.map_name)
-        if seasonal_map and random.random() < seasonal_map["present_spawn_chance"]:
+        if (
+            seasonal_map
+            and "present_spawn_chance" in seasonal_map
+            and random.random() < seasonal_map["present_spawn_chance"]
+        ):
             enemy_type = "present"
             present_box = random.choice(seasonal_map["present_boxes"])
         speed = wave["speed"]
@@ -2926,6 +3279,12 @@ class Game:
         for explosion in list(self.explosions):
             if not explosion.update(dt):
                 self.explosions.remove(explosion)
+
+        if self.turkey is not None:
+            self.turkey.update(dt, self.towers, self.enemies)
+
+        if self.paint_dash is not None:
+            self.paint_dash.update(dt, self.enemies, self.projectiles)
 
         if self.lives <= 0:
             if self.sandbox:
@@ -3104,7 +3463,7 @@ class Game:
                 pygame.draw.polygon(surface, (245, 210, 125), [inner_tip, inner_left, inner_right])
 
     def draw_grid(self, surface):
-        if self.map_name == "Spiral" or self.map_name in SEASONAL_MAPS:
+        if self.map_name == "Spiral" or SEASONAL_MAPS.get(self.map_name, {}).get("no_grid", False):
             return
         for x in range(0, WIDTH, GRID_SIZE):
             pygame.draw.line(surface, (40, 40, 40), (x, 0), (x, HEIGHT))
@@ -3145,7 +3504,7 @@ class Game:
 
     def draw_present_boxes(self, surface):
         seasonal_map = SEASONAL_MAPS.get(self.map_name)
-        if seasonal_map is None:
+        if seasonal_map is None or "present_boxes" not in seasonal_map:
             return
         for box_x, box_y in seasonal_map["present_boxes"]:
             pygame.draw.ellipse(surface, (18, 30, 42), (box_x - 17, box_y + 10, 34, 9))
@@ -3234,6 +3593,12 @@ class Game:
 
         for enemy in self.enemies:
             enemy.draw(surface)
+
+        if self.turkey is not None:
+            self.turkey.draw(surface)
+
+        if self.paint_dash is not None:
+            self.paint_dash.draw(surface)
 
         if self.map_name == "Spiral":
             self.draw_grass_texture(surface)
@@ -4573,8 +4938,10 @@ def main():
     show_costume_window = False
     show_seasonal_menu = False
     seasonal_date = date.today()
+    seasonal_calendar_month = seasonal_date.replace(day=1)
     seasonal_code_buffer = ""
     seasonal_date_panel_open = False
+    seasonal_date_buttons = {}
     preview_costume = menu_equipped_costume
     running = True
     menu_costume_buttons = {}
@@ -4609,7 +4976,17 @@ def main():
                 event.type == pygame.KEYDOWN
                 and event.unicode
                 and event.unicode.isprintable()
+                and not in_menu
+                and game is not None
+                and not seasonal_date_panel_open
+            ):
+                game.register_cheat_key(event.unicode)
+            if (
+                event.type == pygame.KEYDOWN
+                and event.unicode
+                and event.unicode.isprintable()
                 and not (in_menu and show_costume_window and menu_hat_text_editing)
+                and not seasonal_date_panel_open
             ):
                 seasonal_code = "seasonal_bob"
                 code_candidate = seasonal_code_buffer + event.unicode.lower()
@@ -4619,6 +4996,7 @@ def main():
                     seasonal_code_buffer = event.unicode.lower() if seasonal_code.startswith(event.unicode.lower()) else ""
                 if seasonal_code_buffer == "seasonal_bob":
                     seasonal_date_panel_open = True
+                    seasonal_calendar_month = seasonal_date.replace(day=1)
                     seasonal_code_buffer = ""
                     continue
                 if seasonal_code_buffer:
@@ -4630,16 +5008,30 @@ def main():
                     if event.key == pygame.K_ESCAPE:
                         seasonal_date_panel_open = False
                     elif event.key == pygame.K_LEFT:
-                        seasonal_date = advance_seasonal_date(seasonal_date, -1)
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, -1)
                     elif event.key == pygame.K_RIGHT:
-                        seasonal_date = advance_seasonal_date(seasonal_date, 1)
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, 1)
+                    elif event.key == pygame.K_PAGEUP:
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, -12)
+                    elif event.key == pygame.K_PAGEDOWN:
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, 12)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if SEASONAL_DATE_PREVIOUS_RECT.collidepoint(event.pos):
-                        seasonal_date = advance_seasonal_date(seasonal_date, -1)
-                    elif SEASONAL_DATE_NEXT_RECT.collidepoint(event.pos):
-                        seasonal_date = advance_seasonal_date(seasonal_date, 1)
-                    elif SEASONAL_DATE_CLOSE_RECT.collidepoint(event.pos):
+                    if seasonal_date_buttons["previous_month"].collidepoint(event.pos):
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, -1)
+                    elif seasonal_date_buttons["next_month"].collidepoint(event.pos):
+                        seasonal_calendar_month = shift_calendar_month(seasonal_calendar_month, 1)
+                    elif seasonal_date_buttons["close"].collidepoint(event.pos):
                         seasonal_date_panel_open = False
+                    else:
+                        for day, rect in seasonal_date_buttons["days"].items():
+                            if rect.collidepoint(event.pos):
+                                seasonal_date = date(
+                                    seasonal_calendar_month.year,
+                                    seasonal_calendar_month.month,
+                                    day,
+                                )
+                                seasonal_date_panel_open = False
+                                break
                 continue
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
@@ -4711,16 +5103,6 @@ def main():
                         if map_name in unlocked_maps:
                             selected_map = map_name
                 else:
-                    if event.unicode and event.unicode.isprintable():
-                        game.register_key(event.unicode)
-                    if not game.game_over and event.unicode and event.unicode.isprintable():
-                        game.key_buffer += event.unicode
-                        if len(game.key_buffer) > 12:
-                            game.key_buffer = game.key_buffer[-12:]
-                        if "soft&ball" in game.key_buffer.lower():
-                            game.upgrade_all_towers()
-                            game.key_buffer = ""
-
                     if event.key == pygame.K_r and game.game_over and is_map_available_for_play(selected_map, seasonal_date):
                         game = Game(get_map_path(selected_map), sandbox=game.sandbox, map_name=selected_map)
                     elif event.key == pygame.K_SPACE:
@@ -5039,7 +5421,9 @@ def main():
             game.draw(SCREEN)
 
         if seasonal_date_panel_open:
-            draw_seasonal_date_panel(SCREEN, seasonal_date)
+            seasonal_date_buttons = draw_seasonal_date_panel(
+                SCREEN, seasonal_date, seasonal_calendar_month
+            )
         draw_achievement_popups(SCREEN, achievement_animation_time)
         pygame.display.flip()
 
