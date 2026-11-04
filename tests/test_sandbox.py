@@ -107,6 +107,108 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertEqual(paint_dash.background_color, (72, 48, 62))
 
+    def test_paint_dash_draws_holi_decorations_away_from_path(self):
+        paint_dash = Game(main.get_map_path("paint dash"), map_name="paint dash")
+        classic = Game(MAPS["Classic"])
+        paint_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        classic_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        paint_dash.draw(paint_surface)
+        classic.draw(classic_surface)
+
+        self.assertNotEqual(paint_surface.get_at((75, 82))[:3], paint_dash.background_color)
+        self.assertEqual(classic_surface.get_at((75, 82))[:3], classic.background_color)
+        self.assertEqual(paint_surface.get_at((100, 200))[:3], (180, 140, 80))
+
+    def test_birthday_rush_is_available_only_on_january_sixteenth(self):
+        map_name = "birthday rush"
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 1, 16)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 1, 15)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 1, 17)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 7, 16)))
+
+    def test_birthday_rush_spawns_cakes_falling_onto_the_spiral_path(self):
+        game = Game(main.get_map_path("birthday rush"), map_name="birthday rush")
+        self.assertEqual(game.path_points, MAPS["Spiral"])
+        self.assertGreaterEqual(game.cake_spawn_timer, 7.0)
+        self.assertLessEqual(game.cake_spawn_timer, 15.0)
+
+        game.cake_spawn_timer = 0.1
+        game.enemies_paused = True
+        with patch.object(main.random, "randrange", return_value=1):
+            with patch.object(main.random, "uniform", side_effect=[0.5, 120, 10]):
+                game.update(0.1)
+
+        cake = game.enemies[0]
+        self.assertEqual(cake.type, "cake")
+        self.assertTrue(cake.falling)
+        self.assertEqual(cake.segment, 1)
+        self.assertLess(cake.y, 0)
+        self.assertGreater(cake.fall_target[1], 0)
+        cake.update(2.0, [])
+        self.assertFalse(cake.falling)
+        self.assertEqual((cake.x, cake.y), cake.fall_target)
+
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        cake.draw(surface)
+        self.assertIn("cake", main.BESTIARY)
+        self.assertEqual(game.cake_spawn_timer, 10)
+
+    def test_birthday_rush_draws_no_spiral_plants(self):
+        birthday_rush = Game(main.get_map_path("birthday rush"), map_name="birthday rush")
+        spiral = Game(MAPS["Spiral"], map_name="Spiral")
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        with patch.object(birthday_rush, "draw_grass_texture", wraps=birthday_rush.draw_grass_texture) as draw_plants:
+            birthday_rush.draw(surface)
+        draw_plants.assert_not_called()
+
+        with patch.object(spiral, "draw_grass_texture", wraps=spiral.draw_grass_texture) as draw_plants:
+            spiral.draw(surface)
+        draw_plants.assert_called()
+
+    def test_birthday_rush_uses_its_bright_birthday_background(self):
+        birthday_rush = Game(main.get_map_path("birthday rush"), map_name="birthday rush")
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        birthday_rush.draw(surface)
+
+        self.assertEqual(birthday_rush.background_color, (255, 225, 175))
+        self.assertEqual(surface.get_at((839, 639))[:3], birthday_rush.background_color)
+
+    def test_thrillero_is_available_only_on_halloween(self):
+        map_name = "ThRiLlErO"
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 10, 31)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 10, 30)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 11, 1)))
+
+    def test_thrillero_reuses_classic_path_and_has_pumpkin_spotlights(self):
+        game = Game(main.get_map_path("ThRiLlErO"), map_name="ThRiLlErO")
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertIsNotNone(game.pumpkin_spotlights)
+        game.update(1.0)
+        self.assertEqual(game.pumpkin_spotlights.time, 1.0)
+        game.draw(surface)
+
+        self.assertEqual(surface.get_at((150, 300))[:3], game.background_color)
+        self.assertEqual(surface.get_at((300, 300))[:3], (5, 4, 12))
+
+    def test_pumpkin_spotlight_reveals_beams_and_draws_pumpkins(self):
+        spotlights = main.PumpkinSpotlights()
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        surface.fill((200, 200, 200))
+
+        spotlights.draw(surface)
+
+        self.assertEqual(surface.get_at((420, 300))[:3], (5, 4, 12))
+        self.assertEqual(surface.get_at((134, 300))[:3], (200, 200, 200))
+        self.assertEqual(surface.get_at((220, 300))[:3], (5, 4, 12))
+        self.assertNotEqual(surface.get_at((134, 45))[:3], (200, 200, 200))
+
     def test_gobble_gobble_reuses_classic_path_and_has_a_turkey(self):
         map_name = "Gobble Gobble"
         game = Game(main.get_map_path(map_name), map_name=map_name)
@@ -185,12 +287,17 @@ class SandboxModeTest(unittest.TestCase):
 
         buttons = main.draw_seasonal_maps_menu(surface, date(2026, 12, 25))
 
-        self.assertEqual(set(buttons), {"present maze", "Gobble Gobble", "paint dash"})
+        self.assertEqual(
+            set(buttons),
+            {"present maze", "Gobble Gobble", "paint dash", "birthday rush", "ThRiLlErO"},
+        )
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
         self.assertEqual(main.SEASONAL_MAPS["Gobble Gobble"]["holiday"], "Thanksgiving")
         self.assertEqual(main.SEASONAL_MAPS["paint dash"]["holiday"], "Holi")
+        self.assertEqual(main.SEASONAL_MAPS["birthday rush"]["holiday"], "Birthday")
+        self.assertEqual(main.SEASONAL_MAPS["ThRiLlErO"]["holiday"], "Halloween")
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"

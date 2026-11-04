@@ -240,6 +240,7 @@ BESTIARY = {
     "ghost": {"name": "Ghost", "speed": "standard", "notes": "A wave 7 spirit that flashes visible for 10 sec then invisible for 5 sec."},
     "medic": {"name": "Medic", "speed": "standard", "notes": "A wave 9 support enemy that heals nearby allies when they touch."},
     "present": {"name": "Present", "speed": "standard", "notes": "A surprise enemy that sometimes emerges from gift boxes on the Present Maze."},
+    "cake": {"name": "Cake", "speed": "standard", "notes": "A birthday treat that drops from the sky onto the path on Birthday Rush."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
 ACHIEVEMENT_POPUPS = []
@@ -742,6 +743,26 @@ SEASONAL_MAPS = {
         "background": (72, 48, 62),
         "paint_dash": True,
     },
+    "birthday rush": {
+        "holiday": "Birthday",
+        "availability_label": "January 16",
+        "start": (1, 16),
+        "end": (1, 16),
+        "path": MAPS["Spiral"],
+        "background": (255, 225, 175),
+        "no_grid": True,
+        "cake_spawn_interval": (7.0, 15.0),
+    },
+    "ThRiLlErO": {
+        "holiday": "Halloween",
+        "availability_label": "October 31",
+        "start": (10, 31),
+        "end": (10, 31),
+        "path": MAPS["Classic"],
+        "background": (15, 12, 24),
+        "no_grid": True,
+        "pumpkin_spotlights": True,
+    },
 }
 
 MAP_BACKGROUNDS = {
@@ -1179,6 +1200,8 @@ class Enemy:
         self.ghost_phase_timer = 10.0
         self.shield_angle = 0.0
         self.shield_radius = 30
+        self.falling = False
+        self.fall_target = None
 
     def blocks_projectile_path(self, start_x, start_y, end_x, end_y, projectile_radius=5):
         if self.type != "shielder":
@@ -1223,6 +1246,13 @@ class Enemy:
 
     def update(self, dt, towers):
         if self.finished:
+            return
+        if self.type == "cake" and self.falling:
+            target_x, target_y = self.fall_target
+            self.y = min(target_y, self.y + 280 * dt)
+            if self.y >= target_y:
+                self.x = target_x
+                self.falling = False
             return
         if self.type == "shielder":
             self.shield_angle += dt * 2.4
@@ -1408,6 +1438,21 @@ class Enemy:
             pygame.draw.ellipse(surface, (245, 205, 85), (center_x - 8, center_y - 17, 8, 6), 2)
             pygame.draw.ellipse(surface, (245, 205, 85), (center_x, center_y - 17, 8, 6), 2)
             eye_color = (255, 245, 180)
+        elif self.type == "cake":
+            if self.falling and self.fall_target is not None:
+                shadow_x, shadow_y = self.fall_target
+                pygame.draw.ellipse(surface, (75, 58, 68), (shadow_x - 17, shadow_y + 7, 34, 8))
+            pygame.draw.rect(surface, (235, 155, 95), (center_x - 14, center_y - 5, 28, 17), border_radius=4)
+            pygame.draw.rect(surface, (255, 230, 205), (center_x - 14, center_y - 8, 28, 6), border_radius=3)
+            pygame.draw.rect(surface, (245, 185, 125), (center_x - 10, center_y - 15, 20, 9), border_radius=3)
+            pygame.draw.rect(surface, (255, 240, 220), (center_x - 10, center_y - 17, 20, 5), border_radius=2)
+            for candle_x, candle_color in zip(
+                (center_x - 5, center_x, center_x + 5),
+                ((255, 95, 125), (90, 180, 255), (130, 220, 125)),
+            ):
+                pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
+                pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
+            eye_color = (255, 255, 235)
         else:
             pygame.draw.polygon(
                 surface,
@@ -1852,6 +1897,52 @@ class PaintDashShooter:
             border_radius=2,
         )
         pygame.draw.circle(surface, (100, 220, 245), (gun_x + facing * 5, gun_y), 2)
+
+
+class PumpkinSpotlights:
+    def __init__(self):
+        self.time = 0.0
+        self.phases = (-math.pi / 2, math.pi / 2)
+
+    def update(self, dt):
+        self.time += dt
+
+    def _light_position(self, phase):
+        x = WIDTH * (0.5 + 0.34 * math.sin(self.time * 0.42 + phase))
+        y = 55 + 18 * math.sin(self.time * 0.7 + phase)
+        return round(x), round(y)
+
+    def draw(self, surface):
+        darkness = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        darkness.fill((5, 4, 12, 255))
+        positions = [self._light_position(phase) for phase in self.phases]
+        for x, y in positions:
+            beam_points = [
+                (x - 14, y + 8),
+                (x + 14, y + 8),
+                (x + 95, HEIGHT),
+                (x - 95, HEIGHT),
+            ]
+            pygame.draw.polygon(darkness, (0, 0, 0, 0), beam_points)
+        surface.blit(darkness, (0, 0))
+
+        for x, y in positions:
+            pygame.draw.ellipse(surface, (245, 135, 32), (x - 22, y - 10, 44, 32))
+            for rib_offset in (-10, 0, 10):
+                pygame.draw.ellipse(
+                    surface,
+                    (205, 95, 22),
+                    (x + rib_offset - 7, y - 8, 14, 28),
+                    2,
+                )
+            pygame.draw.rect(surface, (95, 135, 45), (x - 4, y - 18, 8, 10), border_radius=3)
+            pygame.draw.circle(surface, (35, 20, 25), (x - 8, y + 1), 3)
+            pygame.draw.circle(surface, (35, 20, 25), (x + 8, y + 1), 3)
+            pygame.draw.polygon(
+                surface,
+                (70, 25, 30),
+                [(x - 6, y + 10), (x + 6, y + 10), (x, y + 16)],
+            )
 
 
 class FreezeProjectile(Projectile):
@@ -2320,6 +2411,13 @@ class Game:
         self.mines = []
         self.turkey = Turkey() if SEASONAL_MAPS.get(self.map_name, {}).get("turkey") else None
         self.paint_dash = PaintDashShooter() if SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash") else None
+        self.pumpkin_spotlights = (
+            PumpkinSpotlights()
+            if SEASONAL_MAPS.get(self.map_name, {}).get("pumpkin_spotlights")
+            else None
+        )
+        cake_spawn_interval = SEASONAL_MAPS.get(self.map_name, {}).get("cake_spawn_interval")
+        self.cake_spawn_timer = random.uniform(*cake_spawn_interval) if cake_spawn_interval else 0.0
         self.money = START_MONEY
         self.lives = START_LIVES
         self.wave_index = 0
@@ -3165,6 +3263,30 @@ class Game:
         self.enemies.append(enemy)
         self.spawned += 1
 
+    def spawn_cake_enemy(self):
+        if not SEASONAL_MAPS.get(self.map_name, {}).get("cake_spawn_interval"):
+            return
+        segment = random.randrange(len(self.path_points) - 1)
+        start_x, start_y = self.path_points[segment]
+        end_x, end_y = self.path_points[segment + 1]
+        progress = random.uniform(0.15, 0.85)
+        landing_x = start_x + (end_x - start_x) * progress
+        landing_y = start_y + (end_y - start_y) * progress
+        wave = WAVES[min(self.wave_index, len(WAVES) - 1)]
+        cake = Enemy(
+            self.path_points,
+            speed=wave["speed"],
+            hp=wave["hp"],
+            reward=wave["reward"] + 10,
+            enemy_type="cake",
+        )
+        cake.segment = segment
+        cake.x = landing_x
+        cake.y = -random.uniform(100, 220)
+        cake.fall_target = (landing_x, landing_y)
+        cake.falling = True
+        self.enemies.append(cake)
+
     def separate_enemies(self):
         alive_enemies = [enemy for enemy in self.enemies if not enemy.is_dead() and not enemy.reached_goal()]
         for index, enemy_a in enumerate(alive_enemies):
@@ -3195,6 +3317,12 @@ class Game:
 
         self.update_developer_stickman(dt)
         self.unlock_towers()
+        cake_spawn_interval = SEASONAL_MAPS.get(self.map_name, {}).get("cake_spawn_interval")
+        if cake_spawn_interval:
+            self.cake_spawn_timer -= dt
+            if self.cake_spawn_timer <= 0:
+                self.spawn_cake_enemy()
+                self.cake_spawn_timer = random.uniform(*cake_spawn_interval)
 
         if self.wave_index < len(WAVES) and not self.enemies_paused:
             wave = WAVES[self.wave_index]
@@ -3285,6 +3413,9 @@ class Game:
 
         if self.paint_dash is not None:
             self.paint_dash.update(dt, self.enemies, self.projectiles)
+
+        if self.pumpkin_spotlights is not None:
+            self.pumpkin_spotlights.update(dt)
 
         if self.lives <= 0:
             if self.sandbox:
@@ -3515,6 +3646,51 @@ class Game:
             pygame.draw.ellipse(surface, (245, 205, 85), (box_x - 10, box_y - 19, 10, 7), 2)
             pygame.draw.ellipse(surface, (245, 205, 85), (box_x, box_y - 19, 10, 7), 2)
 
+    def draw_paint_dash_decorations(self, surface):
+        if not SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash"):
+            return
+
+        rangoli_centers = (
+            (75, 82), (200, 80), (420, 82), (650, 220), (765, 82),
+            (105, 550), (420, 565), (520, 550), (735, 455),
+        )
+        colors = (
+            (255, 75, 145),
+            (255, 195, 55),
+            (70, 210, 170),
+            (135, 105, 255),
+            (255, 110, 75),
+            (95, 175, 255),
+        )
+        for rangoli_index, (center_x, center_y) in enumerate(rangoli_centers):
+            pygame.draw.circle(surface, (245, 220, 205), (center_x, center_y), 19)
+            for petal_index, color in enumerate(colors):
+                angle = petal_index * math.tau / len(colors) + rangoli_index * 0.18
+                petal_x = round(center_x + math.cos(angle) * 11)
+                petal_y = round(center_y + math.sin(angle) * 11)
+                pygame.draw.circle(surface, color, (petal_x, petal_y), 6)
+                pygame.draw.circle(surface, (255, 245, 220), (petal_x, petal_y), 2)
+            pygame.draw.circle(surface, (255, 220, 85), (center_x, center_y), 5)
+
+        powder_splashes = (
+            (145, 105, (255, 75, 145)),
+            (355, 90, (75, 205, 180)),
+            (485, 565, (255, 185, 55)),
+            (720, 340, (145, 105, 255)),
+            (180, 560, (255, 125, 75)),
+            (380, 95, (95, 170, 255)),
+            (670, 550, (255, 75, 145)),
+        )
+        for splash_index, (center_x, center_y, color) in enumerate(powder_splashes):
+            for dot_index in range(9):
+                angle = dot_index * math.tau / 9 + splash_index * 0.31
+                radius = 8 + (dot_index % 3) * 4
+                dot_x = round(center_x + math.cos(angle) * radius)
+                dot_y = round(center_y + math.sin(angle) * radius)
+                dot_radius = 2 + dot_index % 3
+                pygame.draw.circle(surface, color, (dot_x, dot_y), dot_radius)
+            pygame.draw.circle(surface, color, (center_x, center_y), 5)
+
     def draw_placement_preview(self, surface, mouse_pos):
         if self.game_over:
             return False
@@ -3570,6 +3746,7 @@ class Game:
     def draw(self, surface):
         surface.fill(self.background_color)
         self.draw_grid(surface)
+        self.draw_paint_dash_decorations(surface)
         self.draw_path(surface)
         if self.map_name == "Spiral":
             self.draw_grass_texture(surface)
@@ -3605,6 +3782,8 @@ class Game:
 
         self.draw_developer_stickman(surface)
         self.draw_placement_preview(surface, pygame.mouse.get_pos())
+        if self.pumpkin_spotlights is not None:
+            self.pumpkin_spotlights.draw(surface)
 
         tower_info = TOWER_TYPES.get(self.selected_tower)
         if self.selected_tower == "mine":
@@ -4134,6 +4313,17 @@ def draw_bestiary_window(surface, scroll_offset=0):
             pygame.draw.rect(surface, (245, 205, 85), (center_x - 13, center_y - 3, 26, 4))
             pygame.draw.ellipse(surface, (245, 205, 85), (center_x - 8, center_y - 17, 8, 6), 2)
             pygame.draw.ellipse(surface, (245, 205, 85), (center_x, center_y - 17, 8, 6), 2)
+        elif enemy_id == "cake":
+            pygame.draw.rect(surface, (235, 155, 95), (center_x - 14, center_y - 5, 28, 17), border_radius=4)
+            pygame.draw.rect(surface, (255, 230, 205), (center_x - 14, center_y - 8, 28, 6), border_radius=3)
+            pygame.draw.rect(surface, (245, 185, 125), (center_x - 10, center_y - 15, 20, 9), border_radius=3)
+            pygame.draw.rect(surface, (255, 240, 220), (center_x - 10, center_y - 17, 20, 5), border_radius=2)
+            for candle_x, candle_color in zip(
+                (center_x - 5, center_x, center_x + 5),
+                ((255, 95, 125), (90, 180, 255), (130, 220, 125)),
+            ):
+                pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
+                pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
@@ -4147,6 +4337,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "ghost": (240, 255, 255),
             "medic": (255, 255, 220),
             "present": (255, 245, 180),
+            "cake": (255, 255, 235),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
         pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
