@@ -241,6 +241,8 @@ BESTIARY = {
     "medic": {"name": "Medic", "speed": "standard", "notes": "A wave 9 support enemy that heals nearby allies when they touch."},
     "present": {"name": "Present", "speed": "standard", "notes": "A surprise enemy that sometimes emerges from gift boxes on the Present Maze."},
     "cake": {"name": "Cake", "speed": "standard", "notes": "A birthday treat that drops from the sky onto the path on Birthday Rush."},
+    "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
+    "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
 ACHIEVEMENT_POPUPS = []
@@ -763,6 +765,25 @@ SEASONAL_MAPS = {
         "no_grid": True,
         "pumpkin_spotlights": True,
     },
+    "muddy mud": {
+        "holiday": "Earth Day",
+        "availability_label": "April 22",
+        "start": (4, 22),
+        "end": (4, 22),
+        "path": MAPS["Classic"],
+        "background": (49, 62, 42),
+        "earth_spawn_interval": (8.0, 14.0),
+    },
+    "homework": {
+        "holiday": "Back to School",
+        "availability_rule": "homework_week",
+        "availability_label": "Week of October 19 (Monday-Sunday)",
+        "path": MAPS["Classic"],
+        "background": (48, 57, 78),
+        "homework_freeze_interval": 10.0,
+        "homework_freeze_duration": 3.0,
+        "homework_freeze_count": 3,
+    },
 }
 
 MAP_BACKGROUNDS = {
@@ -779,6 +800,7 @@ BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
 SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
+SEASONAL_MAPS_DATE_RECT = pygame.Rect(WIDTH - 220, 28, 180, 38)
 SEASONAL_DATE_PANEL_RECT = pygame.Rect(WIDTH // 2 - 210, HEIGHT // 2 - 220, 420, 440)
 SEASONAL_DATE_PREVIOUS_MONTH_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 - 148, 42, 34)
 SEASONAL_DATE_NEXT_MONTH_RECT = pygame.Rect(WIDTH // 2 + 128, HEIGHT // 2 - 148, 42, 34)
@@ -801,6 +823,10 @@ def is_seasonal_map_available(map_name, today=None):
     if seasonal_map.get("availability_rule") == "thanksgiving_week":
         thanksgiving = thanksgiving_date(today.year)
         return thanksgiving - timedelta(days=3) <= today <= thanksgiving + timedelta(days=3)
+    if seasonal_map.get("availability_rule") == "homework_week":
+        october_19 = date(today.year, 10, 19)
+        week_start = october_19 - timedelta(days=october_19.weekday())
+        return week_start <= today < week_start + timedelta(days=7)
     if seasonal_map.get("availability_rule") == "holi_day":
         return today == holi_date(today.year)
     current_day = (today.month, today.day)
@@ -983,6 +1009,11 @@ def draw_seasonal_maps_menu(surface, today=None):
     surface.blit(details, (40, 68))
 
     map_buttons = {}
+    pygame.draw.rect(surface, (85, 105, 145), SEASONAL_MAPS_DATE_RECT, border_radius=6)
+    pygame.draw.rect(surface, (180, 205, 245), SEASONAL_MAPS_DATE_RECT, 2, border_radius=6)
+    date_text = FONT.render(f"Date: {today:%Y-%m-%d}", True, (255, 255, 255))
+    surface.blit(date_text, date_text.get_rect(center=SEASONAL_MAPS_DATE_RECT.center))
+    map_buttons["select_date"] = SEASONAL_MAPS_DATE_RECT
     if not SEASONAL_MAPS:
         empty_text = FONT.render("No seasonal maps have been added yet.", True, (220, 220, 220))
         surface.blit(empty_text, (50, 130))
@@ -1202,6 +1233,12 @@ class Enemy:
         self.shield_radius = 30
         self.falling = False
         self.fall_target = None
+        self.earth_join_target = None
+        self.earth_rumble_timer = 0.0
+        self.earth_rumble_time = 0.0
+        self.earth_emerge_timer = 0.0
+        self.homework_frozen_timer = 0.0
+        self.homework_animation_time = 0.0
 
     def blocks_projectile_path(self, start_x, start_y, end_x, end_y, projectile_radius=5):
         if self.type != "shielder":
@@ -1247,6 +1284,19 @@ class Enemy:
     def update(self, dt, towers):
         if self.finished:
             return
+        if self.homework_frozen_timer > 0:
+            self.homework_frozen_timer = max(0.0, self.homework_frozen_timer - dt)
+            self.homework_animation_time += dt
+            return
+        if self.type == "earth" and self.earth_rumble_timer > 0:
+            self.earth_rumble_timer = max(0.0, self.earth_rumble_timer - dt)
+            self.earth_rumble_time += dt
+            if self.earth_rumble_timer == 0:
+                self.earth_emerge_timer = 0.45
+            return
+        if self.type == "earth" and self.earth_emerge_timer > 0:
+            self.earth_emerge_timer = max(0.0, self.earth_emerge_timer - dt)
+            return
         if self.type == "cake" and self.falling:
             target_x, target_y = self.fall_target
             self.y = min(target_y, self.y + 280 * dt)
@@ -1267,6 +1317,18 @@ class Enemy:
                 self.slow_timer = 0.0
                 self.slow_amount = 1.0
         self.speed = self.base_speed * self.slow_amount
+        if self.type == "earth" and self.earth_join_target is not None:
+            target_x, target_y = self.earth_join_target
+            dx, dy = target_x - self.x, target_y - self.y
+            distance = math.hypot(dx, dy)
+            step = self.speed * dt
+            if distance <= step or distance == 0:
+                self.x, self.y = target_x, target_y
+                self.earth_join_target = None
+            else:
+                self.x += dx / distance * step
+                self.y += dy / distance * step
+            return
         if self.segment >= len(self.path) - 1:
             self.finished = True
             return
@@ -1339,7 +1401,12 @@ class Enemy:
             self.y += dy / distance * step
 
     def heal_touching_allies(self, enemies, dt):
-        if self.type != "medic" or self.is_dead() or self.reached_goal():
+        if (
+            self.type != "medic"
+            or self.is_dead()
+            or self.reached_goal()
+            or self.homework_frozen_timer > 0
+        ):
             return
         for ally in enemies:
             if ally is self or ally.is_dead() or ally.reached_goal():
@@ -1349,6 +1416,7 @@ class Enemy:
 
     def draw(self, surface):
         center_x, center_y = int(self.x), int(self.y)
+        earth_rumbling = self.type == "earth" and self.earth_rumble_timer > 0
         if self.type == "flyer":
             wing_color = (70, 150, 155)
             body_color = (115, 205, 210)
@@ -1453,6 +1521,38 @@ class Enemy:
                 pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
                 pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
             eye_color = (255, 255, 235)
+        elif self.type == "earth":
+            rumbling = self.earth_rumble_timer > 0
+            shake = round(math.sin(self.earth_rumble_time * 38) * 3) if rumbling else 0
+            emerge_ratio = 1.0 - min(1.0, self.earth_emerge_timer / 0.45)
+            body_height = 3 if rumbling else max(3, round(22 * emerge_ratio))
+            pygame.draw.ellipse(
+                surface,
+                (67, 45, 28),
+                (center_x - 17 + shake, center_y + 10 - body_height, 34, body_height + 8),
+            )
+            pygame.draw.ellipse(
+                surface,
+                (112, 78, 42),
+                (center_x - 14 + shake, center_y + 7 - body_height, 28, body_height),
+            )
+            if rumbling:
+                pygame.draw.line(
+                    surface, (42, 34, 24),
+                    (center_x - 10 + shake, center_y + 7),
+                    (center_x - 7 + shake, center_y + 2),
+                    2,
+                )
+                pygame.draw.line(
+                    surface, (42, 34, 24),
+                    (center_x + 8 + shake, center_y + 6),
+                    (center_x + 5 + shake, center_y + 1),
+                    2,
+                )
+            else:
+                pygame.draw.circle(surface, (137, 101, 55), (center_x - 7, center_y - body_height + 3), 4)
+                pygame.draw.circle(surface, (137, 101, 55), (center_x + 7, center_y - body_height + 3), 4)
+            eye_color = (245, 235, 190)
         else:
             pygame.draw.polygon(
                 surface,
@@ -1464,12 +1564,13 @@ class Enemy:
             pygame.draw.circle(surface, (215, 55, 65), (center_x, center_y), 12)
             eye_color = (255, 235, 120)
 
-        pygame.draw.circle(surface, eye_color, (center_x - 5, center_y - 3), 3)
-        pygame.draw.circle(surface, eye_color, (center_x + 5, center_y - 3), 3)
-        pygame.draw.circle(surface, (35, 25, 25), (center_x - 5, center_y - 3), 1)
-        pygame.draw.circle(surface, (35, 25, 25), (center_x + 5, center_y - 3), 1)
-        pygame.draw.arc(surface, (45, 20, 20), (center_x - 7, center_y + 1, 14, 9), 0.2, math.pi - 0.2, 2)
-        if self.loser_hat:
+        if not earth_rumbling:
+            pygame.draw.circle(surface, eye_color, (center_x - 5, center_y - 3), 3)
+            pygame.draw.circle(surface, eye_color, (center_x + 5, center_y - 3), 3)
+            pygame.draw.circle(surface, (35, 25, 25), (center_x - 5, center_y - 3), 1)
+            pygame.draw.circle(surface, (35, 25, 25), (center_x + 5, center_y - 3), 1)
+            pygame.draw.arc(surface, (45, 20, 20), (center_x - 7, center_y + 1, 14, 9), 0.2, math.pi - 0.2, 2)
+        if self.loser_hat and not earth_rumbling:
             pygame.draw.polygon(
                 surface,
                 (125, 125, 135),
@@ -1480,14 +1581,46 @@ class Enemy:
             surface.blit(loser_text, (center_x - loser_text.get_width() // 2, center_y - 40))
         for projectile in self.projectiles:
             projectile.draw(surface)
-        hp_ratio = self.hp / self.max_hp
-        bar_width = 24
-        bar_height = 4
-        bar_x = self.x - bar_width / 2
-        bar_y = self.y - 20
-        pygame.draw.rect(surface, (40, 40, 40), (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
-        pygame.draw.rect(surface, (60, 60, 60), (bar_x, bar_y, bar_width, bar_height))
-        pygame.draw.rect(surface, (80, 200, 80), (bar_x, bar_y, bar_width * hp_ratio, bar_height))
+        if not earth_rumbling:
+            hp_ratio = self.hp / self.max_hp
+            bar_width = 24
+            bar_height = 4
+            bar_x = self.x - bar_width / 2
+            bar_y = self.y - 20
+            pygame.draw.rect(surface, (40, 40, 40), (bar_x - 1, bar_y - 1, bar_width + 2, bar_height + 2))
+            pygame.draw.rect(surface, (60, 60, 60), (bar_x, bar_y, bar_width, bar_height))
+            pygame.draw.rect(surface, (80, 200, 80), (bar_x, bar_y, bar_width * hp_ratio, bar_height))
+        if self.homework_frozen_timer > 0:
+            pencil_lift = round(math.sin(self.homework_animation_time * 12) * 2)
+            pygame.draw.line(
+                surface,
+                (80, 45, 28),
+                (center_x - 17, center_y + 12),
+                (center_x + 17, center_y + 12),
+                4,
+            )
+            pygame.draw.polygon(surface, (245, 235, 205), [
+                (center_x - 12, center_y + 3),
+                (center_x - 1, center_y + 6),
+                (center_x - 1, center_y + 16),
+                (center_x - 12, center_y + 13),
+            ])
+            pygame.draw.polygon(surface, (255, 248, 220), [
+                (center_x + 12, center_y + 3),
+                (center_x + 1, center_y + 6),
+                (center_x + 1, center_y + 16),
+                (center_x + 12, center_y + 13),
+            ])
+            pygame.draw.line(surface, (125, 165, 190), (center_x - 9, center_y + 8), (center_x - 3, center_y + 10), 1)
+            pygame.draw.line(surface, (125, 165, 190), (center_x + 9, center_y + 8), (center_x + 3, center_y + 10), 1)
+            pygame.draw.line(
+                surface,
+                (225, 180, 95),
+                (center_x + 14, center_y + 5 - pencil_lift),
+                (center_x + 5, center_y - 4 - pencil_lift),
+                3,
+            )
+            pygame.draw.circle(surface, (55, 45, 35), (center_x + 5, center_y - 4 - pencil_lift), 2)
 
     def is_dead(self):
         return self.hp <= 0
@@ -2418,6 +2551,9 @@ class Game:
         )
         cake_spawn_interval = SEASONAL_MAPS.get(self.map_name, {}).get("cake_spawn_interval")
         self.cake_spawn_timer = random.uniform(*cake_spawn_interval) if cake_spawn_interval else 0.0
+        earth_spawn_interval = SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval")
+        self.earth_spawn_timer = random.uniform(*earth_spawn_interval) if earth_spawn_interval else 0.0
+        self.homework_timer = SEASONAL_MAPS.get(self.map_name, {}).get("homework_freeze_interval", 0.0)
         self.money = START_MONEY
         self.lives = START_LIVES
         self.wave_index = 0
@@ -3287,10 +3423,84 @@ class Game:
         cake.falling = True
         self.enemies.append(cake)
 
+    def spawn_earth_enemy(self):
+        if not SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval"):
+            return
+
+        spawn_x, spawn_y = WIDTH / 2, HEIGHT / 2
+        for _ in range(32):
+            spawn_x = random.uniform(35, WIDTH - 35)
+            spawn_y = random.uniform(35, HEIGHT - 35)
+            nearest_path_distance = min(
+                self._distance_to_segment(spawn_x, spawn_y, *start, *end)
+                for start, end in zip(self.path_points, self.path_points[1:])
+            )
+            if nearest_path_distance >= PATH_WIDTH / 2 + 20:
+                break
+
+        nearest_distance = float("inf")
+        merge_segment = 0
+        merge_point = self.path_points[0]
+        for segment, (start, end) in enumerate(zip(self.path_points, self.path_points[1:])):
+            start_x, start_y = start
+            end_x, end_y = end
+            dx, dy = end_x - start_x, end_y - start_y
+            length_squared = dx * dx + dy * dy
+            progress = 0.0 if length_squared == 0 else (
+                (spawn_x - start_x) * dx + (spawn_y - start_y) * dy
+            ) / length_squared
+            progress = clamp(progress, 0.0, 1.0)
+            projected_x = start_x + progress * dx
+            projected_y = start_y + progress * dy
+            distance = math.hypot(spawn_x - projected_x, spawn_y - projected_y)
+            if distance < nearest_distance:
+                nearest_distance = distance
+                merge_segment = segment
+                merge_point = (projected_x, projected_y)
+
+        wave = WAVES[min(self.wave_index, len(WAVES) - 1)]
+        earth = Enemy(
+            self.path_points,
+            speed=wave["speed"],
+            hp=wave["hp"],
+            reward=wave["reward"] + 10,
+            enemy_type="earth",
+        )
+        earth.segment = merge_segment
+        earth.x, earth.y = spawn_x, spawn_y
+        earth.earth_join_target = merge_point
+        earth.earth_rumble_timer = 0.8
+        self.enemies.append(earth)
+
+    def update_homework_effect(self, dt):
+        seasonal_map = SEASONAL_MAPS.get(self.map_name, {})
+        interval = seasonal_map.get("homework_freeze_interval")
+        if interval is None or self.enemies_paused:
+            return
+
+        self.homework_timer -= dt
+        if self.homework_timer > 0:
+            return
+
+        self.homework_timer += interval
+        candidates = [
+            enemy for enemy in self.enemies
+            if not enemy.is_dead()
+            and not enemy.reached_goal()
+            and enemy.homework_frozen_timer <= 0
+        ]
+        freeze_count = min(seasonal_map["homework_freeze_count"], len(candidates))
+        for enemy in random.sample(candidates, freeze_count):
+            enemy.homework_frozen_timer = seasonal_map["homework_freeze_duration"]
+
     def separate_enemies(self):
         alive_enemies = [enemy for enemy in self.enemies if not enemy.is_dead() and not enemy.reached_goal()]
         for index, enemy_a in enumerate(alive_enemies):
             for enemy_b in alive_enemies[index + 1 :]:
+                enemy_a_frozen = enemy_a.homework_frozen_timer > 0
+                enemy_b_frozen = enemy_b.homework_frozen_timer > 0
+                if enemy_a_frozen and enemy_b_frozen:
+                    continue
                 dx = enemy_a.x - enemy_b.x
                 dy = enemy_a.y - enemy_b.y
                 distance = math.hypot(dx, dy)
@@ -3302,14 +3512,12 @@ class Game:
                     push_amount = (min_distance - distance) / min_distance * 14.0
                     push_x = (dx / distance) * push_amount
                     push_y = (dy / distance) * push_amount
-                    enemy_a.x += push_x
-                    enemy_a.y += push_y
-                    enemy_b.x -= push_x
-                    enemy_b.y -= push_y
-                    enemy_a.x = clamp(enemy_a.x, 0, WIDTH)
-                    enemy_a.y = clamp(enemy_a.y, 0, HEIGHT)
-                    enemy_b.x = clamp(enemy_b.x, 0, WIDTH)
-                    enemy_b.y = clamp(enemy_b.y, 0, HEIGHT)
+                    if not enemy_a_frozen:
+                        enemy_a.x = clamp(enemy_a.x + push_x, 0, WIDTH)
+                        enemy_a.y = clamp(enemy_a.y + push_y, 0, HEIGHT)
+                    if not enemy_b_frozen:
+                        enemy_b.x = clamp(enemy_b.x - push_x, 0, WIDTH)
+                        enemy_b.y = clamp(enemy_b.y - push_y, 0, HEIGHT)
 
     def update(self, dt):
         if self.game_over:
@@ -3323,6 +3531,12 @@ class Game:
             if self.cake_spawn_timer <= 0:
                 self.spawn_cake_enemy()
                 self.cake_spawn_timer = random.uniform(*cake_spawn_interval)
+        earth_spawn_interval = SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval")
+        if earth_spawn_interval:
+            self.earth_spawn_timer -= dt
+            if self.earth_spawn_timer <= 0:
+                self.spawn_earth_enemy()
+                self.earth_spawn_timer = random.uniform(*earth_spawn_interval)
 
         if self.wave_index < len(WAVES) and not self.enemies_paused:
             wave = WAVES[self.wave_index]
@@ -3342,6 +3556,8 @@ class Game:
 
         if not self.enemies_paused:
             self.separate_enemies()
+
+        self.update_homework_effect(dt)
 
         if not self.enemies_paused:
             for enemy in list(self.enemies):
@@ -4324,6 +4540,11 @@ def draw_bestiary_window(surface, scroll_offset=0):
             ):
                 pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
                 pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
+        elif enemy_id == "earth":
+            pygame.draw.ellipse(surface, (67, 45, 28), (center_x - 17, center_y - 1, 34, 22))
+            pygame.draw.ellipse(surface, (112, 78, 42), (center_x - 14, center_y - 5, 28, 17))
+            pygame.draw.circle(surface, (137, 101, 55), (center_x - 7, center_y - 2), 4)
+            pygame.draw.circle(surface, (137, 101, 55), (center_x + 7, center_y - 2), 4)
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
@@ -4338,6 +4559,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "medic": (255, 255, 220),
             "present": (255, 245, 180),
             "cake": (255, 255, 235),
+            "earth": (245, 235, 190),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
         pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
@@ -5360,6 +5582,9 @@ def main():
                     elif show_seasonal_menu:
                         if SEASONAL_MAPS_BACK_RECT.collidepoint(event.pos):
                             show_seasonal_menu = False
+                        elif SEASONAL_MAPS_DATE_RECT.collidepoint(event.pos):
+                            seasonal_date_panel_open = True
+                            seasonal_calendar_month = seasonal_date.replace(day=1)
                         else:
                             for map_name, rect in menu_seasonal_map_buttons.items():
                                 if rect.collidepoint(event.pos) and is_seasonal_map_available(map_name, seasonal_date):

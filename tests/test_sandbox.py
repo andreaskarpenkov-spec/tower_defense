@@ -184,6 +184,159 @@ class SandboxModeTest(unittest.TestCase):
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 10, 30)))
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 11, 1)))
 
+    def test_muddy_mud_is_available_only_on_earth_day(self):
+        map_name = "muddy mud"
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 4, 22)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 4, 21)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 4, 23)))
+
+    def test_homework_is_available_during_the_monday_to_sunday_week_containing_october_19(self):
+        map_name = "homework"
+        expected_ranges = {
+            2025: (date(2025, 10, 13), date(2025, 10, 19)),
+            2026: (date(2026, 10, 19), date(2026, 10, 25)),
+            2027: (date(2027, 10, 18), date(2027, 10, 24)),
+        }
+
+        for year, (week_start, week_end) in expected_ranges.items():
+            with self.subTest(year=year):
+                self.assertTrue(main.is_seasonal_map_available(map_name, week_start))
+                self.assertTrue(main.is_seasonal_map_available(map_name, week_end))
+                self.assertFalse(main.is_seasonal_map_available(map_name, week_start - main.timedelta(days=1)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, week_end + main.timedelta(days=1)))
+
+    def test_homework_reuses_classic_path_and_freezes_three_enemies_on_a_ten_second_cycle(self):
+        game = Game(main.get_map_path("homework"), map_name="homework", sandbox=True)
+        enemies = [
+            Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+            for _ in range(4)
+        ]
+        for index, enemy in enumerate(enemies):
+            enemy.x = 100 + index * 30
+            enemy.y = 100
+        game.enemies = enemies
+        game.wave_ready = True
+        game.homework_timer = 0.1
+
+        with patch.object(main.random, "sample", return_value=enemies[:3]) as sample:
+            game.update(0.1)
+
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertEqual(game.background_color, (48, 57, 78))
+        self.assertEqual(sample.call_count, 1)
+        self.assertEqual([enemy.homework_frozen_timer for enemy in enemies], [2.9, 2.9, 2.9, 0.0])
+        self.assertAlmostEqual(game.homework_timer, 10.0)
+
+    def test_homework_freeze_stops_enemy_and_medic_until_three_seconds_expire(self):
+        enemy = Enemy(MAPS["Classic"], speed=100, hp=100, reward=1)
+        enemy.x, enemy.y = 100, 100
+        enemy.homework_frozen_timer = 3.0
+        enemy.update(2.5, [])
+        self.assertEqual((enemy.x, enemy.y), (100, 100))
+        self.assertAlmostEqual(enemy.homework_frozen_timer, 0.5)
+
+        enemy.update(0.5, [])
+        self.assertEqual((enemy.x, enemy.y), (100, 100))
+        self.assertEqual(enemy.homework_frozen_timer, 0)
+        enemy.update(0.1, [])
+        self.assertNotEqual((enemy.x, enemy.y), (100, 100))
+
+        medic = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="medic")
+        ally = Enemy(MAPS["Classic"], speed=0, hp=50, reward=1)
+        medic.x = ally.x = 100
+        medic.y = ally.y = 100
+        medic.homework_frozen_timer = 1.0
+        medic.heal_touching_allies([medic, ally], 1.0)
+        self.assertEqual(ally.hp, 50)
+
+        game = Game(main.get_map_path("homework"), map_name="homework", sandbox=True)
+        frozen_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        moving_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        frozen_enemy.x, frozen_enemy.y = 100, 100
+        moving_enemy.x, moving_enemy.y = 110, 100
+        frozen_enemy.homework_frozen_timer = 1.0
+        game.enemies = [frozen_enemy, moving_enemy]
+        game.separate_enemies()
+        self.assertEqual((frozen_enemy.x, frozen_enemy.y), (100, 100))
+        self.assertNotEqual((moving_enemy.x, moving_enemy.y), (110, 100))
+
+    def test_homework_freeze_draws_an_animated_book_and_pencil(self):
+        enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        enemy.homework_frozen_timer = 3.0
+        first_frame = pygame.Surface((main.WIDTH, main.HEIGHT))
+        second_frame = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        enemy.draw(first_frame)
+        enemy.homework_animation_time = 0.1
+        enemy.draw(second_frame)
+
+        self.assertNotEqual(
+            pygame.image.tobytes(first_frame, "RGB"),
+            pygame.image.tobytes(second_frame, "RGB"),
+        )
+
+    def test_muddy_mud_earth_enemies_emerge_off_path_and_join_classic_route(self):
+        game = Game(main.get_map_path("muddy mud"), map_name="muddy mud")
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertGreaterEqual(game.earth_spawn_timer, 8.0)
+        self.assertLessEqual(game.earth_spawn_timer, 14.0)
+        game.earth_spawn_timer = 0.1
+        game.enemies_paused = True
+
+        with patch.object(main.random, "uniform", return_value=100):
+            game.update(0.1)
+
+        earth = game.enemies[0]
+        self.assertEqual(earth.type, "earth")
+        self.assertEqual((earth.x, earth.y), (100, 100))
+        self.assertEqual(earth.earth_join_target, (100.0, 200.0))
+        self.assertGreater(earth.earth_rumble_timer, 0)
+        self.assertEqual(earth.earth_emerge_timer, 0)
+        self.assertEqual(game.earth_spawn_timer, 100)
+
+        earth.base_speed = 200
+        earth.update(0.5, [])
+        self.assertAlmostEqual(earth.earth_rumble_timer, 0.3)
+        self.assertEqual(earth.earth_emerge_timer, 0)
+        earth.update(0.4, [])
+        self.assertEqual(earth.earth_rumble_timer, 0)
+        self.assertEqual(earth.earth_emerge_timer, 0.45)
+        earth.update(0.5, [])
+        earth.update(1.0, [])
+        self.assertEqual((earth.x, earth.y), (100.0, 200.0))
+        self.assertIsNone(earth.earth_join_target)
+        earth.update(0.1, [])
+        self.assertGreater(earth.x, 100)
+
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        earth.draw(surface)
+        self.assertIn("earth", main.BESTIARY)
+
+    def test_earth_enemy_rumble_is_visibly_animated_before_emerging(self):
+        earth = Enemy(MAPS["Classic"], speed=5.0, hp=180, reward=18, enemy_type="earth")
+        earth.x, earth.y = 200, 200
+        earth.earth_rumble_timer = 0.8
+        earth.earth_rumble_time = 0.05
+        first_frame = pygame.Surface((main.WIDTH, main.HEIGHT))
+        second_frame = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        earth.draw(first_frame)
+        earth.earth_rumble_time = 0.12
+        earth.draw(second_frame)
+
+        self.assertTrue(earth.earth_rumble_timer > 0)
+        self.assertEqual(earth.earth_emerge_timer, 0)
+        self.assertNotEqual(
+            pygame.image.tobytes(first_frame, "RGB"),
+            pygame.image.tobytes(second_frame, "RGB"),
+        )
+
+    def test_non_earth_day_maps_do_not_spawn_earth_enemies(self):
+        classic = Game(MAPS["Classic"], map_name="Classic")
+        self.assertEqual(classic.earth_spawn_timer, 0)
+        self.assertFalse(main.SEASONAL_MAPS["ThRiLlErO"].get("earth_spawn_interval"))
+
     def test_thrillero_reuses_classic_path_and_has_pumpkin_spotlights(self):
         game = Game(main.get_map_path("ThRiLlErO"), map_name="ThRiLlErO")
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
@@ -289,8 +442,13 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertEqual(
             set(buttons),
-            {"present maze", "Gobble Gobble", "paint dash", "birthday rush", "ThRiLlErO"},
+            {
+                "present maze", "Gobble Gobble", "paint dash",
+                "birthday rush", "ThRiLlErO", "muddy mud", "homework", "select_date",
+            },
         )
+        self.assertIn("select_date", buttons)
+        self.assertEqual(buttons["select_date"], main.SEASONAL_MAPS_DATE_RECT)
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
@@ -298,6 +456,8 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.SEASONAL_MAPS["paint dash"]["holiday"], "Holi")
         self.assertEqual(main.SEASONAL_MAPS["birthday rush"]["holiday"], "Birthday")
         self.assertEqual(main.SEASONAL_MAPS["ThRiLlErO"]["holiday"], "Halloween")
+        self.assertEqual(main.SEASONAL_MAPS["muddy mud"]["holiday"], "Earth Day")
+        self.assertEqual(main.SEASONAL_MAPS["homework"]["holiday"], "Back to School")
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"
