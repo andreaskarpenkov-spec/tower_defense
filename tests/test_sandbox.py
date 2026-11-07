@@ -284,6 +284,165 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(rendered_fish[2].get_at((97, 100))[:3], (255, 255, 255))
         self.assertEqual(rendered_fish[3].get_at((101, 98))[:3], (245, 180, 95))
 
+    def test_hats_away_is_available_only_on_st_patricks_day(self):
+        map_name = "hat's away!"
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 3, 17)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 3, 16)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 3, 18)))
+
+    def test_circle_of_lamps_is_available_on_diwali_in_india(self):
+        map_name = "circle of lamps"
+        diwali_dates = {
+            2025: date(2025, 10, 20),
+            2026: date(2026, 11, 8),
+            2027: date(2027, 10, 29),
+            2028: date(2028, 10, 17),
+            2029: date(2029, 11, 5),
+            2030: date(2030, 10, 26),
+            2031: date(2031, 11, 14),
+        }
+
+        for year, diwali in diwali_dates.items():
+            with self.subTest(year=year):
+                self.assertEqual(main.diwali_date(year), diwali)
+                self.assertTrue(main.is_seasonal_map_available(map_name, diwali))
+                self.assertFalse(main.is_seasonal_map_available(map_name, diwali - main.timedelta(days=1)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, diwali + main.timedelta(days=1)))
+
+    def test_circle_of_lamps_moves_four_lamps_and_lights_towers_on_contact(self):
+        map_name = "circle of lamps"
+        game = Game(main.get_map_path(map_name), map_name=map_name, sandbox=True)
+        classic = Game(MAPS["Classic"], map_name="Classic", sandbox=True)
+        tower = Tower(400, 300)
+        game.towers.append(tower)
+        lamp = game.diwali_lamps[0]
+        lamp.x, lamp.y = 370, 300
+        lamp.vx, lamp.vy = 100, 0
+        initial_position = (lamp.x, lamp.y)
+
+        game.update(0.1)
+
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertEqual(len(game.diwali_lamps), 4)
+        self.assertEqual(classic.diwali_lamps, [])
+        self.assertNotEqual((lamp.x, lamp.y), initial_position)
+        self.assertEqual(tower.burning_timer, 10.0)
+
+    def test_burning_tower_requires_forty_dollars_to_extinguish_by_clicking(self):
+        game = Game(main.get_map_path("circle of lamps"), map_name="circle of lamps", sandbox=True)
+        tower = Tower(200, 200)
+        tower.burning_timer = 5.0
+        game.towers.append(tower)
+
+        game.money = 39
+        self.assertTrue(game.upgrade_tower((200, 200)))
+        self.assertEqual(tower.burning_timer, 5.0)
+        self.assertEqual(game.money, 39)
+
+        game.money = 40
+        self.assertTrue(game.upgrade_tower((200, 200)))
+        self.assertEqual(tower.burning_timer, 0.0)
+        self.assertEqual(game.money, 0)
+        self.assertEqual(tower.health, 120)
+
+    def test_burning_tower_is_destroyed_after_ten_seconds(self):
+        game = Game(main.get_map_path("circle of lamps"), map_name="circle of lamps", sandbox=True)
+        game.enemies_paused = True
+        tower = Tower(400, 300)
+        tower.burning_timer = 10.0
+        game.towers.append(tower)
+        for lamp in game.diwali_lamps:
+            lamp.x, lamp.y = 700, 500
+            lamp.vx = 0
+            lamp.vy = 0
+
+        game.update(9.9)
+        self.assertIn(tower, game.towers)
+        self.assertAlmostEqual(tower.burning_timer, 0.1)
+
+        game.update(0.1)
+        self.assertNotIn(tower, game.towers)
+
+    def test_burning_tower_draws_flames_and_timer(self):
+        tower = Tower(200, 200)
+        tower.burning_timer = 10.0
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+
+        tower.draw(surface, show_range=False)
+
+        flame_colors = {(225, 65, 20), (255, 185, 45)}
+        self.assertTrue(any(
+            surface.get_at((x, y))[:3] in flame_colors
+            for x in range(175, 226)
+            for y in range(175, 200)
+        ))
+
+    def test_leprechaun_throws_one_hat_every_twenty_seconds_at_a_random_living_enemy(self):
+        leprechaun = main.Leprechaun()
+        leprechaun.vx = 0
+        leprechaun.vy = 0
+        leprechaun.turn_timer = 100
+        leprechaun.throw_timer = 20
+        first_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        second_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1)
+        first_enemy.hp = 0
+        coins = []
+        explosions = []
+
+        leprechaun.update(19.9, [first_enemy, second_enemy], coins, explosions)
+        self.assertIsNone(leprechaun.hat)
+
+        with patch.object(main.random, "choice", return_value=second_enemy):
+            leprechaun.update(0.11, [first_enemy, second_enemy], coins, explosions)
+
+        self.assertIsNotNone(leprechaun.hat)
+        self.assertIs(leprechaun.hat.target, second_enemy)
+        self.assertAlmostEqual(leprechaun.throw_timer, 20.0)
+
+    def test_leprechaun_runs_throws_hat_at_random_enemy_and_does_not_reward_hat_kill(self):
+        map_name = "hat's away!"
+        game = Game(main.get_map_path(map_name), map_name=map_name, sandbox=True)
+        classic = Game(MAPS["Classic"], map_name="Classic", sandbox=True)
+        target = Enemy(MAPS["Classic"], speed=0, hp=100, reward=25)
+        target.x = game.leprechaun.x + 5
+        target.y = game.leprechaun.y - 20
+        another_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=25)
+        game.enemies = [target, another_enemy]
+        game.wave_ready = True
+        game.leprechaun.throw_timer = 0.1
+        game.leprechaun.turn_timer = 10
+        initial_money = game.money
+        initial_kills = game.enemy_kills["ground"]
+        initial_leprechaun_position = (game.leprechaun.x, game.leprechaun.y)
+
+        with patch.object(main.random, "choice", return_value=target):
+            game.update(0.1)
+
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertIsNone(classic.leprechaun)
+        self.assertNotEqual(
+            (game.leprechaun.x, game.leprechaun.y),
+            initial_leprechaun_position,
+        )
+        self.assertEqual(game.money, initial_money)
+        self.assertNotIn(target, game.enemies)
+        self.assertIn(another_enemy, game.enemies)
+        self.assertEqual(game.enemy_kills["ground"], initial_kills + 1)
+        self.assertTrue(game.leprechaun_coin_bursts)
+        self.assertTrue(any(isinstance(effect, main.Explosion) for effect in game.explosions))
+
+    def test_leprechaun_coin_burst_fades_and_expires_without_collection(self):
+        burst = main.LeprechaunCoinBurst(100, 100)
+        initial_positions = [(coin["x"], coin["y"]) for coin in burst.coins]
+
+        self.assertTrue(burst.update(0.5))
+        self.assertNotEqual(
+            [(coin["x"], coin["y"]) for coin in burst.coins],
+            initial_positions,
+        )
+        self.assertFalse(burst.update(2.0))
+
     def test_homework_is_available_during_the_monday_to_sunday_week_containing_august_19(self):
         map_name = "homework"
         expected_ranges = {
@@ -541,9 +700,10 @@ class SandboxModeTest(unittest.TestCase):
                 "1 fish, 2 fish, pi fish, pie fish", "select_date",
             },
         )
+        self.assertNotIn("hat's away!", buttons)
+        self.assertNotIn("circle of lamps", buttons)
         self.assertIn("select_date", buttons)
         self.assertEqual(buttons["select_date"], main.SEASONAL_MAPS_DATE_RECT)
-        self.assertLess(buttons["1 fish, 2 fish, pi fish, pie fish"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
@@ -554,6 +714,8 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.SEASONAL_MAPS["muddy mud"]["holiday"], "Earth Day")
         self.assertEqual(main.SEASONAL_MAPS["homework"]["holiday"], "Back to School")
         self.assertEqual(main.SEASONAL_MAPS["1 fish, 2 fish, pi fish, pie fish"]["holiday"], "Pi Day")
+        self.assertEqual(main.SEASONAL_MAPS["hat's away!"]["holiday"], "St. Patrick's Day")
+        self.assertEqual(main.SEASONAL_MAPS["circle of lamps"]["holiday"], "Diwali")
 
     def test_seasonal_maps_menu_scroll_reveals_bottom_entries_inside_viewport(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
@@ -567,16 +729,10 @@ class SandboxModeTest(unittest.TestCase):
             scroll_offset=scroll_limit + 100,
         )
 
-        self.assertLess(top_buttons["1 fish, 2 fish, pi fish, pie fish"].height, 52)
-        self.assertEqual(bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].height, 52)
-        self.assertEqual(
-            bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].bottom,
-            main.SEASONAL_MAPS_VIEWPORT_RECT.bottom,
-        )
-        self.assertLess(
-            bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].bottom,
-            main.SEASONAL_MAPS_BACK_RECT.top,
-        )
+        self.assertNotIn("circle of lamps", top_buttons)
+        self.assertEqual(bottom_buttons["circle of lamps"].height, 52)
+        self.assertEqual(bottom_buttons["circle of lamps"].bottom, main.SEASONAL_MAPS_VIEWPORT_RECT.bottom)
+        self.assertLess(bottom_buttons["circle of lamps"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"
@@ -1522,6 +1678,38 @@ class SandboxModeTest(unittest.TestCase):
         self.assertTrue(game.draw_placement_preview(surface, (80, 200)))
         game.money = 0
         self.assertFalse(game.draw_placement_preview(surface, (80, 200)))
+
+    def test_towers_can_be_placed_in_the_top_right_area_on_every_map(self):
+        map_paths = dict(MAPS)
+        map_paths.update({
+            map_name: main.get_map_path(map_name)
+            for map_name in main.SEASONAL_MAPS
+        })
+
+        for map_name, path in map_paths.items():
+            with self.subTest(map_name=map_name):
+                game = Game(path, sandbox=True, map_name=map_name)
+                game.selected_tower = "basic"
+                placement = (760, 80)
+                self.assertTrue(game.can_place(*placement))
+                self.assertTrue(game.draw_placement_preview(
+                    pygame.Surface((main.WIDTH, main.HEIGHT)),
+                    placement,
+                ))
+                game.place_tower(placement)
+                self.assertEqual(len(game.towers), 1)
+                self.assertEqual((game.towers[0].x, game.towers[0].y), placement)
+
+    def test_path_mines_can_be_placed_in_the_rightmost_map_area(self):
+        game = Game(MAPS["Classic"], sandbox=True)
+        game.selected_tower = "mine"
+        placement = (720, 160)
+
+        self.assertTrue(game.can_place_mine(*placement))
+        game.place_tower(placement)
+
+        self.assertEqual(len(game.mines), 1)
+        self.assertEqual((game.mines[0].x, game.mines[0].y), placement)
 
     def test_object_selection_is_saved_and_loaded(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

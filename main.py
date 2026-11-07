@@ -245,6 +245,7 @@ BESTIARY = {
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
     "pi": {"name": "Pi", "speed": "standard", "notes": "A Pi Day enemy shaped like the Greek letter pi."},
     "pie": {"name": "Pie", "speed": "standard", "notes": "A Pi Day enemy shaped like a slice of pie."},
+
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
@@ -797,6 +798,23 @@ SEASONAL_MAPS = {
         "pi_day_fish": True,
         "pi_day_drop_interval": (8.0, 14.0),
     },
+    "hat's away!": {
+        "holiday": "St. Patrick's Day",
+        "availability_label": "March 17",
+        "start": (3, 17),
+        "end": (3, 17),
+        "path": MAPS["Classic"],
+        "background": (28, 72, 48),
+        "leprechaun": True,
+    },
+    "circle of lamps": {
+        "holiday": "Diwali",
+        "availability_rule": "diwali_day",
+        "availability_label": "Diwali day (India)",
+        "path": MAPS["Classic"],
+        "background": (48, 34, 24),
+        "diwali_lamps": True,
+    },
 }
 
 MAP_BACKGROUNDS = {
@@ -848,6 +866,8 @@ def is_seasonal_map_available(map_name, today=None):
         return week_start <= today < week_start + timedelta(days=7)
     if seasonal_map.get("availability_rule") == "holi_day":
         return today == holi_date(today.year)
+    if seasonal_map.get("availability_rule") == "diwali_day":
+        return today == diwali_date(today.year)
     current_day = (today.month, today.day)
     start_day = seasonal_map["start"]
     end_day = seasonal_map["end"]
@@ -863,6 +883,65 @@ def thanksgiving_date(year):
         if week[calendar.THURSDAY]
     ]
     return date(year, 11, thursdays[3])
+
+
+def diwali_date(year):
+    observed_dates = {
+        2025: date(2025, 10, 20),
+        2026: date(2026, 11, 8),
+        2027: date(2027, 10, 29),
+        2028: date(2028, 10, 17),
+        2029: date(2029, 11, 5),
+        2030: date(2030, 10, 26),
+        2031: date(2031, 11, 14),
+    }
+    if year in observed_dates:
+        return observed_dates[year]
+
+    target = datetime(year, 11, 1, 12)
+    target_julian_day = 2451545 + (target - datetime(2000, 1, 1, 12)).total_seconds() / 86400
+    phase_index = round((target_julian_day - 2451550.09766) / 29.530588861)
+    new_moons = []
+    for offset in range(-1, 2):
+        k = phase_index + offset
+        t = k / 1236.85
+        eccentricity = 1 - 0.002516 * t - 0.0000074 * t * t
+        mean_anomaly = math.radians(
+            2.5534 + 29.1053567 * k - 0.0000014 * t * t - 0.00000011 * t**3
+        )
+        moon_anomaly = math.radians(
+            201.5643 + 385.81693528 * k + 0.0107582 * t * t
+            + 0.00001238 * t**3 - 0.000000058 * t**4
+        )
+        latitude_argument = math.radians(
+            160.7108 + 390.67050284 * k - 0.0016118 * t * t
+            - 0.00000227 * t**3 + 0.000000011 * t**4
+        )
+        ascending_node = math.radians(
+            124.7746 - 1.56375588 * k + 0.0020672 * t * t + 0.00000215 * t**3
+        )
+        correction = (
+            -0.40720 * math.sin(moon_anomaly)
+            + 0.17241 * eccentricity * math.sin(mean_anomaly)
+            + 0.01608 * math.sin(2 * moon_anomaly)
+            + 0.01039 * math.sin(2 * latitude_argument)
+            + 0.00739 * eccentricity * math.sin(moon_anomaly - mean_anomaly)
+            - 0.00514 * eccentricity * math.sin(moon_anomaly + mean_anomaly)
+            + 0.00208 * eccentricity**2 * math.sin(2 * mean_anomaly)
+            - 0.00111 * math.sin(moon_anomaly - 2 * latitude_argument)
+            - 0.00057 * math.sin(moon_anomaly + 2 * latitude_argument)
+            + 0.00056 * eccentricity * math.sin(2 * moon_anomaly + mean_anomaly)
+            - 0.00042 * math.sin(3 * moon_anomaly)
+            + 0.00042 * eccentricity * math.sin(mean_anomaly + 2 * latitude_argument)
+            + 0.00038 * eccentricity * math.sin(mean_anomaly - 2 * latitude_argument)
+            - 0.00024 * eccentricity * math.sin(2 * moon_anomaly - mean_anomaly)
+            - 0.00017 * math.sin(ascending_node)
+        )
+        julian_day = 2451550.09766 + 29.530588861 * k + 0.00015437 * t**2 - 0.00000015 * t**3 + 0.00000000073 * t**4 + correction
+        new_moons.append(datetime(2000, 1, 1, 12) + timedelta(days=julian_day - 2451545))
+    new_moon = min(new_moons, key=lambda moment: abs((moment - target).total_seconds()))
+    india_local_time = new_moon + timedelta(hours=5, minutes=30)
+    return india_local_time.date()
 
 
 def holi_date(year):
@@ -1730,6 +1809,8 @@ class Tower:
         if self.type == "spawner":
             self.spawn_timer = 0.0
         self.health = 120
+        self.burning_timer = 0.0
+        self.burning_animation_time = 0.0
         self.shooter_immunity = False
         if self.type == "boinger":
             self.move_speed = TOWER_TYPES[self.type]["move_speed"]
@@ -1995,6 +2076,26 @@ class Tower:
             barrel_end_x = base_x + int(math.cos(self.aim_angle) * 18)
             barrel_end_y = base_y + int(math.sin(self.aim_angle) * 18)
             pygame.draw.line(surface, (220, 255, 255), (base_x, base_y), (barrel_end_x, barrel_end_y), 3)
+
+        if self.burning_timer > 0:
+            flicker = round(math.sin(self.burning_animation_time * 18) * 2)
+            for offset, flame_height in ((-10, 13), (0, 19), (10, 12)):
+                flame_x = base_x + offset
+                flame_y = base_y - 9 + flicker
+                pygame.draw.polygon(surface, (225, 65, 20), [
+                    (flame_x - 5, flame_y + 7),
+                    (flame_x - 3, flame_y - flame_height // 2),
+                    (flame_x + flicker // 2, flame_y - flame_height),
+                    (flame_x + 5, flame_y + 7),
+                ])
+                pygame.draw.polygon(surface, (255, 185, 45), [
+                    (flame_x - 2, flame_y + 5),
+                    (flame_x, flame_y - flame_height // 2),
+                    (flame_x + 3, flame_y + 5),
+                ])
+            seconds_left = math.ceil(self.burning_timer)
+            fire_text = FONT.render(str(seconds_left), True, (255, 235, 160))
+            surface.blit(fire_text, fire_text.get_rect(center=(base_x, base_y - 30)))
 
         if show_range:
             pygame.draw.circle(surface, self.ring, (base_x, base_y), self.range, 1)
@@ -2679,6 +2780,215 @@ class PiDayFish:
             pygame.draw.line(surface, (255, 235, 190), (center_x - 3, center_y - 17), (center_x + 3, center_y - 18), 1)
 
 
+class LeprechaunHat:
+    def __init__(self, x, y, target, speed=420):
+        self.x = float(x)
+        self.y = float(y)
+        self.target = target
+        self.speed = speed
+        self.active = True
+        self.hit = False
+
+    def update(self, dt):
+        if not self.active or self.target.is_dead() or self.target.reached_goal():
+            self.active = False
+            return False
+
+        dx = self.target.x - self.x
+        dy = self.target.y - self.y
+        distance = math.hypot(dx, dy)
+        step = self.speed * dt
+        if distance <= step + 10 or distance == 0:
+            self.x, self.y = self.target.x, self.target.y
+            self.target.reward = 0
+            self.target.hp = 0
+            self.active = False
+            self.hit = True
+            return False
+
+        self.x += dx / distance * step
+        self.y += dy / distance * step
+        return True
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        pygame.draw.ellipse(surface, (25, 75, 38), (x - 13, y + 3, 26, 6))
+        pygame.draw.rect(surface, (35, 125, 58), (x - 8, y - 8, 16, 11), border_radius=3)
+        pygame.draw.rect(surface, (35, 125, 58), (x - 12, y, 24, 4), border_radius=2)
+        pygame.draw.rect(surface, (235, 190, 55), (x - 8, y - 2, 16, 3))
+
+
+class LeprechaunCoinBurst:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.duration = 2.4
+        self.time = 0.0
+        self.coins = []
+        for index in range(9):
+            angle = math.tau * index / 9
+            speed = random.uniform(35, 105)
+            self.coins.append({
+                "x": float(x),
+                "y": float(y),
+                "vx": math.cos(angle) * speed,
+                "vy": math.sin(angle) * speed - 35,
+                "phase": random.uniform(0, math.tau),
+            })
+
+    def update(self, dt):
+        self.time += dt
+        for coin in self.coins:
+            coin["x"] += coin["vx"] * dt
+            coin["y"] += coin["vy"] * dt
+            coin["vy"] += 90 * dt
+        return self.time < self.duration
+
+    def draw(self, surface):
+        fade = max(0.0, 1.0 - self.time / self.duration)
+        for coin in self.coins:
+            x, y = round(coin["x"]), round(coin["y"])
+            width = max(2, round(7 * abs(math.cos(self.time * 8 + coin["phase"]))))
+            pygame.draw.ellipse(surface, (120, 80, 20), (x - width // 2, y - 3, width + 1, 7))
+            gold = (255, round(185 * fade + 45), 35)
+            pygame.draw.ellipse(surface, gold, (x - width // 2, y - 4, width + 1, 7))
+            if width > 3:
+                pygame.draw.line(surface, (255, 240, 145), (x, y - 3), (x, y + 1), 1)
+
+
+class Leprechaun:
+    def __init__(self):
+        self.x = WIDTH / 2
+        self.y = HEIGHT / 2
+        self.vx = 105.0
+        self.vy = 72.0
+        self.run_time = 0.0
+        self.turn_timer = 0.0
+        self.throw_timer = 20.0
+        self.hat = None
+
+    def update(self, dt, enemies, coin_bursts, explosions):
+        self.run_time += dt
+        self.turn_timer -= dt
+        if self.turn_timer <= 0:
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(85, 145)
+            self.vx = math.cos(angle) * speed
+            self.vy = math.sin(angle) * speed
+            self.turn_timer = random.uniform(0.7, 1.6)
+
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        if self.x < 28 or self.x > WIDTH - 28:
+            self.x = clamp(self.x, 28, WIDTH - 28)
+            self.vx *= -1
+        if self.y < 50 or self.y > HEIGHT - 32:
+            self.y = clamp(self.y, 50, HEIGHT - 32)
+            self.vy *= -1
+
+        self.throw_timer -= dt
+        if self.throw_timer <= 0:
+            targets = [
+                enemy for enemy in enemies
+                if not enemy.is_dead() and not enemy.reached_goal()
+            ]
+            if targets:
+                target = random.choice(targets)
+                self.hat = LeprechaunHat(self.x, self.y - 20, target)
+            self.throw_timer = 20.0
+
+        if self.hat is not None and not self.hat.update(dt):
+            target = self.hat.target
+            if self.hat.hit:
+                coin_bursts.append(LeprechaunCoinBurst(target.x, target.y))
+                explosions.append(Explosion(
+                    target.x,
+                    target.y,
+                    radius=34,
+                    color=(255, 205, 55),
+                    duration=0.28,
+                ))
+            self.hat = None
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        stride = round(math.sin(self.run_time * 13) * 5)
+        facing = 1 if self.vx >= 0 else -1
+
+        pygame.draw.ellipse(surface, (25, 55, 35), (x - 13, y + 21, 26, 7))
+        pygame.draw.line(surface, (35, 115, 55), (x, y - 5), (x, y + 13), 7)
+        pygame.draw.line(surface, (30, 95, 45), (x, y + 1), (x - facing * 10, y + 8 + stride), 4)
+        pygame.draw.line(surface, (30, 95, 45), (x, y + 1), (x + facing * 10, y + 7 - stride), 4)
+        pygame.draw.line(surface, (45, 70, 38), (x, y + 12), (x - 7, y + 23 - stride), 4)
+        pygame.draw.line(surface, (45, 70, 38), (x, y + 12), (x + 7, y + 23 + stride), 4)
+
+        pygame.draw.circle(surface, (245, 195, 135), (x, y - 12), 9)
+        pygame.draw.circle(surface, (235, 105, 45), (x - 8, y - 11), 4)
+        pygame.draw.circle(surface, (235, 105, 45), (x + 8, y - 11), 4)
+        pygame.draw.arc(surface, (235, 105, 45), (x - 7, y - 9, 14, 12), 0, math.pi, 3)
+        pygame.draw.circle(surface, (35, 35, 25), (x + facing * 3, y - 14), 2)
+
+        if self.hat is None:
+            pygame.draw.ellipse(surface, (25, 75, 38), (x - 14, y - 25, 28, 7))
+            pygame.draw.rect(surface, (35, 125, 58), (x - 9, y - 39, 18, 15), border_radius=3)
+            pygame.draw.rect(surface, (35, 125, 58), (x - 14, y - 27, 28, 4), border_radius=2)
+            pygame.draw.rect(surface, (235, 190, 55), (x - 9, y - 30, 18, 4))
+
+        if self.hat is not None:
+            self.hat.draw(surface)
+
+
+class DiwaliLamp:
+    COLORS = ((255, 195, 65), (255, 125, 45), (255, 225, 125), (245, 155, 55))
+
+    def __init__(self, lamp_index):
+        self.x = 100 + lamp_index * 190
+        self.y = 95 + (lamp_index % 2) * 280
+        angle = lamp_index * math.tau / 4
+        self.vx = math.cos(angle) * 85
+        self.vy = math.sin(angle) * 65
+        self.phase = lamp_index * 1.7
+        self.color = self.COLORS[lamp_index]
+
+    def update(self, dt, towers):
+        self.phase += dt * 5
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        if self.x < 22 or self.x > WIDTH - 22:
+            self.x = clamp(self.x, 22, WIDTH - 22)
+            self.vx *= -1
+        if self.y < 38 or self.y > HEIGHT - 22:
+            self.y = clamp(self.y, 38, HEIGHT - 22)
+            self.vy *= -1
+
+        for tower in towers:
+            if tower.burning_timer <= 0 and math.hypot(tower.x - self.x, tower.y - self.y) <= 25:
+                tower.burning_timer = 10.0
+                tower.burning_animation_time = 0.0
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        flicker = round(math.sin(self.phase) * 2)
+        pygame.draw.ellipse(surface, (75, 43, 25), (x - 13, y + 3, 26, 6))
+        pygame.draw.polygon(surface, (185, 90, 38), [
+            (x - 12, y),
+            (x - 7, y + 7),
+            (x + 7, y + 7),
+            (x + 12, y),
+            (x, y + 3),
+        ])
+        pygame.draw.ellipse(surface, (235, 155, 55), (x - 11, y - 2, 22, 8))
+        pygame.draw.ellipse(surface, (255, 210, 105), (x - 7, y - 1, 14, 5))
+        pygame.draw.polygon(surface, self.color, [
+            (x - 5, y - 3),
+            (x - 3, y - 11 - flicker),
+            (x, y - 17 - flicker),
+            (x + 4, y - 9 - flicker),
+            (x + 5, y - 3),
+        ])
+        pygame.draw.circle(surface, (255, 245, 185), (x, y - 6 - flicker), 3)
+
+
 class Game:
     def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
@@ -2696,6 +3006,13 @@ class Game:
         self.explosions = []
         self.mines = []
         self.turkey = Turkey() if SEASONAL_MAPS.get(self.map_name, {}).get("turkey") else None
+        self.diwali_lamps = (
+            [DiwaliLamp(index) for index in range(4)]
+            if SEASONAL_MAPS.get(self.map_name, {}).get("diwali_lamps")
+            else []
+        )
+        self.leprechaun = Leprechaun() if SEASONAL_MAPS.get(self.map_name, {}).get("leprechaun") else None
+        self.leprechaun_coin_bursts = []
         pi_day_drop_interval = SEASONAL_MAPS.get(self.map_name, {}).get("pi_day_drop_interval")
         self.pi_day_fish = (
             [PiDayFish(index, pi_day_drop_interval) for index in range(4)]
@@ -2885,6 +3202,12 @@ class Game:
     def upgrade_tower(self, mouse_pos):
         for tower in self.towers:
             if math.hypot(tower.x - mouse_pos[0], tower.y - mouse_pos[1]) <= 24:
+                if tower.burning_timer > 0:
+                    if self.money >= 40:
+                        self.money -= 40
+                        tower.burning_timer = 0.0
+                        tower.burning_animation_time = 0.0
+                    return True
                 if tower.shooter_immunity:
                     return False
                 if self.money < 80:
@@ -3788,6 +4111,21 @@ class Game:
             self.separate_enemies()
 
         self.update_homework_effect(dt)
+        if self.diwali_lamps:
+            for tower in self.towers:
+                if tower.burning_timer > 0:
+                    tower.burning_animation_time += dt
+                    tower.burning_timer = max(0.0, tower.burning_timer - dt)
+                    if tower.burning_timer == 0:
+                        tower.health = 0
+            for lamp in self.diwali_lamps:
+                lamp.update(dt, self.towers)
+        if self.leprechaun is not None:
+            self.leprechaun.update(dt, self.enemies, self.leprechaun_coin_bursts, self.explosions)
+            self.leprechaun_coin_bursts = [
+                burst for burst in self.leprechaun_coin_bursts
+                if burst.update(dt)
+            ]
 
         if not self.enemies_paused:
             for enemy in list(self.enemies):
@@ -3923,8 +4261,6 @@ class Game:
         if self.selected_tower in TOWER_TYPES and TOWER_TYPES[self.selected_tower].get("win_cost"):
             if not self.can_buy_win_tower(self.selected_tower):
                 return
-            if grid_x > WIDTH - 140:
-                return
             if not self.can_place(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
@@ -3937,8 +4273,6 @@ class Game:
                 save_unlocks(self.unlocked_towers, self.win_coins, highest_cleared_wave=self.highest_cleared_wave)
             return
         if not self.is_tower_unlocked(self.selected_tower):
-            return
-        if grid_x > WIDTH - 140:
             return
         if not self.can_place(grid_x, grid_y):
             return
@@ -3966,8 +4300,6 @@ class Game:
         return True
 
     def can_place_mine(self, x, y):
-        if x > WIDTH - 140:
-            return False
         path_half = PATH_WIDTH / 2 + 8
         on_path = False
         for i in range(len(self.path_points) - 1):
@@ -4151,12 +4483,11 @@ class Game:
         elif selected == "gunner":
             valid = self.is_tower_unlocked(selected) and self.money >= TOWER_TYPES[selected]["cost"] and self.can_place_mine(grid_x, grid_y)
         elif selected in TOWER_TYPES and TOWER_TYPES[selected].get("win_cost"):
-            valid = self.can_buy_win_tower(selected) and grid_x <= WIDTH - 140 and self.can_place(grid_x, grid_y)
+            valid = self.can_buy_win_tower(selected) and self.can_place(grid_x, grid_y)
         elif selected in TOWER_TYPES:
             valid = (
                 self.is_tower_unlocked(selected)
                 and self.money >= TOWER_TYPES[selected]["cost"]
-                and grid_x <= WIDTH - 140
                 and self.can_place(grid_x, grid_y)
             )
         else:
@@ -4202,6 +4533,9 @@ class Game:
         for tower in self.towers:
             tower.draw(surface)
 
+        for lamp in self.diwali_lamps:
+            lamp.draw(surface)
+
         for mine in self.mines:
             mine.draw(surface)
 
@@ -4219,6 +4553,11 @@ class Game:
 
         if self.turkey is not None:
             self.turkey.draw(surface)
+
+        for coin_burst in self.leprechaun_coin_bursts:
+            coin_burst.draw(surface)
+        if self.leprechaun is not None:
+            self.leprechaun.draw(surface)
 
         for fish in self.pi_day_fish:
             fish.draw(surface)
