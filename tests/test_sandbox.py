@@ -191,12 +191,105 @@ class SandboxModeTest(unittest.TestCase):
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 4, 21)))
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 4, 23)))
 
-    def test_homework_is_available_during_the_monday_to_sunday_week_containing_october_19(self):
+    def test_pi_day_fish_map_is_available_only_on_march_fourteenth(self):
+        map_name = "1 fish, 2 fish, pi fish, pie fish"
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, date(2026, 3, 14)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 3, 13)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 3, 15)))
+
+    def test_pi_day_map_has_four_swimming_fish_that_drop_their_enemies_onto_classic_path(self):
+        map_name = "1 fish, 2 fish, pi fish, pie fish"
+        game = Game(main.get_map_path(map_name), map_name=map_name, sandbox=True)
+        classic = Game(MAPS["Classic"], map_name="Classic", sandbox=True)
+        self.assertEqual(game.path_points, MAPS["Classic"])
+        self.assertEqual(len(game.pi_day_fish), 4)
+        self.assertEqual(classic.pi_day_fish, [])
+
+        fish_start_positions = [(fish.x, fish.y) for fish in game.pi_day_fish]
+        for fish in game.pi_day_fish:
+            fish.drop_timer = 0.1
+        game.enemies_paused = True
+        with patch.object(main.random, "choice", return_value="ground"):
+            with patch.object(main.random, "randrange", return_value=1):
+                with patch.object(main.random, "uniform", return_value=0.5):
+                    game.update(0.1)
+
+        self.assertEqual(len(game.enemies), 5)
+        self.assertEqual(
+            [enemy.type for enemy in game.enemies],
+            ["ground", "ground", "ground", "pi", "pie"],
+        )
+        self.assertTrue(all(enemy.falling for enemy in game.enemies))
+        self.assertNotEqual(
+            [(fish.x, fish.y) for fish in game.pi_day_fish],
+            fish_start_positions,
+        )
+
+        for enemy in game.enemies:
+            start = game.path_points[enemy.segment]
+            end = game.path_points[enemy.segment + 1]
+            self.assertEqual(
+                game._distance_to_segment(*enemy.fall_target, *start, *end),
+                0,
+            )
+            landing_point = enemy.fall_target
+            enemy.update(10, [])
+            self.assertFalse(enemy.falling)
+            self.assertEqual((enemy.x, enemy.y), landing_point)
+            enemy.update(0.1, [])
+            self.assertNotEqual((enemy.x, enemy.y), landing_point)
+
+    def test_pi_and_pie_enemies_have_distinct_drawings(self):
+        pi_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="pi")
+        pie_enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="pie")
+        pi_enemy.x = pie_enemy.x = 100
+        pi_enemy.y = pie_enemy.y = 100
+        pi_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        pie_surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        pi_surface.fill((0, 0, 0))
+        pie_surface.fill((0, 0, 0))
+
+        pi_enemy.draw(pi_surface)
+        pie_enemy.draw(pie_surface)
+
+        self.assertNotEqual(
+            pygame.image.tobytes(pi_surface, "RGB"),
+            pygame.image.tobytes(pie_surface, "RGB"),
+        )
+        self.assertEqual(pi_surface.get_at((100, 91))[:3], (255, 245, 220))
+        self.assertEqual(pi_surface.get_at((92, 108))[:3], (255, 245, 220))
+        self.assertEqual(pi_surface.get_at((107, 108))[:3], (255, 245, 220))
+        self.assertIn("pi", main.BESTIARY)
+        self.assertIn("pie", main.BESTIARY)
+
+    def test_pi_day_fish_draw_spawn_count_and_special_enemy_markers(self):
+        rendered_fish = []
+        for fish_index in range(4):
+            fish = main.PiDayFish(fish_index, (8.0, 14.0))
+            fish.x = 100
+            fish.y = 120
+            surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+            surface.fill((0, 0, 0))
+            fish.draw(surface)
+            rendered_fish.append(surface)
+
+        marker_area = pygame.Rect(90, 91, 20, 17)
+        for surface in rendered_fish[:2]:
+            self.assertTrue(any(
+                surface.get_at((x, y))[:3] == (255, 255, 255)
+                for x in range(marker_area.left + 2, marker_area.right - 2)
+                for y in range(marker_area.top + 2, marker_area.bottom - 2)
+            ))
+        self.assertEqual(rendered_fish[2].get_at((97, 100))[:3], (255, 255, 255))
+        self.assertEqual(rendered_fish[3].get_at((101, 98))[:3], (245, 180, 95))
+
+    def test_homework_is_available_during_the_monday_to_sunday_week_containing_august_19(self):
         map_name = "homework"
         expected_ranges = {
-            2025: (date(2025, 10, 13), date(2025, 10, 19)),
-            2026: (date(2026, 10, 19), date(2026, 10, 25)),
-            2027: (date(2027, 10, 18), date(2027, 10, 24)),
+            2025: (date(2025, 8, 18), date(2025, 8, 24)),
+            2026: (date(2026, 8, 17), date(2026, 8, 23)),
+            2027: (date(2027, 8, 16), date(2027, 8, 22)),
         }
 
         for year, (week_start, week_end) in expected_ranges.items():
@@ -444,11 +537,13 @@ class SandboxModeTest(unittest.TestCase):
             set(buttons),
             {
                 "present maze", "Gobble Gobble", "paint dash",
-                "birthday rush", "ThRiLlErO", "muddy mud", "homework", "select_date",
+                "birthday rush", "ThRiLlErO", "muddy mud", "homework",
+                "1 fish, 2 fish, pi fish, pie fish", "select_date",
             },
         )
         self.assertIn("select_date", buttons)
         self.assertEqual(buttons["select_date"], main.SEASONAL_MAPS_DATE_RECT)
+        self.assertLess(buttons["1 fish, 2 fish, pi fish, pie fish"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["holiday"], "Christmas")
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["start"], (12, 24))
         self.assertEqual(main.SEASONAL_MAPS["present maze"]["end"], (12, 26))
@@ -458,6 +553,30 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.SEASONAL_MAPS["ThRiLlErO"]["holiday"], "Halloween")
         self.assertEqual(main.SEASONAL_MAPS["muddy mud"]["holiday"], "Earth Day")
         self.assertEqual(main.SEASONAL_MAPS["homework"]["holiday"], "Back to School")
+        self.assertEqual(main.SEASONAL_MAPS["1 fish, 2 fish, pi fish, pie fish"]["holiday"], "Pi Day")
+
+    def test_seasonal_maps_menu_scroll_reveals_bottom_entries_inside_viewport(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        scroll_limit = main.seasonal_maps_scroll_limit(len(main.SEASONAL_MAPS))
+        self.assertGreater(scroll_limit, 0)
+
+        top_buttons = main.draw_seasonal_maps_menu(surface, date(2026, 12, 25))
+        bottom_buttons = main.draw_seasonal_maps_menu(
+            surface,
+            date(2026, 12, 25),
+            scroll_offset=scroll_limit + 100,
+        )
+
+        self.assertLess(top_buttons["1 fish, 2 fish, pi fish, pie fish"].height, 52)
+        self.assertEqual(bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].height, 52)
+        self.assertEqual(
+            bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].bottom,
+            main.SEASONAL_MAPS_VIEWPORT_RECT.bottom,
+        )
+        self.assertLess(
+            bottom_buttons["1 fish, 2 fish, pi fish, pie fish"].bottom,
+            main.SEASONAL_MAPS_BACK_RECT.top,
+        )
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"

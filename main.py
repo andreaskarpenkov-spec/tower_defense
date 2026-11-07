@@ -26,6 +26,7 @@ WALKER_DAMAGE = 24
 MEDIC_TOUCH_RANGE = 26
 MEDIC_HEAL_RATE = 30
 FONT = pygame.font.SysFont("arial", 18)
+PI_FISH_MARKER_FONT = pygame.font.SysFont("arial", 12, bold=True)
 MATRIX_RAIN_FONT = pygame.font.SysFont("monospace", 10, bold=True)
 
 TOWER_TYPES = {
@@ -242,6 +243,8 @@ BESTIARY = {
     "present": {"name": "Present", "speed": "standard", "notes": "A surprise enemy that sometimes emerges from gift boxes on the Present Maze."},
     "cake": {"name": "Cake", "speed": "standard", "notes": "A birthday treat that drops from the sky onto the path on Birthday Rush."},
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
+    "pi": {"name": "Pi", "speed": "standard", "notes": "A Pi Day enemy shaped like the Greek letter pi."},
+    "pie": {"name": "Pie", "speed": "standard", "notes": "A Pi Day enemy shaped like a slice of pie."},
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
@@ -777,12 +780,22 @@ SEASONAL_MAPS = {
     "homework": {
         "holiday": "Back to School",
         "availability_rule": "homework_week",
-        "availability_label": "Week of October 19 (Monday-Sunday)",
+        "availability_label": "Week of August 19 (Monday-Sunday)",
         "path": MAPS["Classic"],
         "background": (48, 57, 78),
         "homework_freeze_interval": 10.0,
         "homework_freeze_duration": 3.0,
         "homework_freeze_count": 3,
+    },
+    "1 fish, 2 fish, pi fish, pie fish": {
+        "holiday": "Pi Day",
+        "availability_label": "March 14",
+        "start": (3, 14),
+        "end": (3, 14),
+        "path": MAPS["Classic"],
+        "background": (28, 72, 92),
+        "pi_day_fish": True,
+        "pi_day_drop_interval": (8.0, 14.0),
     },
 }
 
@@ -801,6 +814,12 @@ HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
 SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
 SEASONAL_MAPS_DATE_RECT = pygame.Rect(WIDTH - 220, 28, 180, 38)
+SEASONAL_MAPS_VIEWPORT_RECT = pygame.Rect(
+    40,
+    112,
+    WIDTH - 80,
+    SEASONAL_MAPS_BACK_RECT.top - 124,
+)
 SEASONAL_DATE_PANEL_RECT = pygame.Rect(WIDTH // 2 - 210, HEIGHT // 2 - 220, 420, 440)
 SEASONAL_DATE_PREVIOUS_MONTH_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 - 148, 42, 34)
 SEASONAL_DATE_NEXT_MONTH_RECT = pygame.Rect(WIDTH // 2 + 128, HEIGHT // 2 - 148, 42, 34)
@@ -824,8 +843,8 @@ def is_seasonal_map_available(map_name, today=None):
         thanksgiving = thanksgiving_date(today.year)
         return thanksgiving - timedelta(days=3) <= today <= thanksgiving + timedelta(days=3)
     if seasonal_map.get("availability_rule") == "homework_week":
-        october_19 = date(today.year, 10, 19)
-        week_start = october_19 - timedelta(days=october_19.weekday())
+        august_19 = date(today.year, 8, 19)
+        week_start = august_19 - timedelta(days=august_19.weekday())
         return week_start <= today < week_start + timedelta(days=7)
     if seasonal_map.get("availability_rule") == "holi_day":
         return today == holi_date(today.year)
@@ -1000,7 +1019,12 @@ def draw_seasonal_date_panel(surface, current_date, calendar_month=None):
     return buttons
 
 
-def draw_seasonal_maps_menu(surface, today=None):
+def seasonal_maps_scroll_limit(map_count):
+    content_height = max(0, (map_count - 1) * 64 + 52)
+    return max(0, content_height - SEASONAL_MAPS_VIEWPORT_RECT.height)
+
+
+def draw_seasonal_maps_menu(surface, today=None, scroll_offset=0):
     today = today or date.today()
     surface.fill((18, 24, 36))
     title = FONT.render("Seasonal Maps", True, (255, 235, 180))
@@ -1020,8 +1044,17 @@ def draw_seasonal_maps_menu(surface, today=None):
         instruction = FONT.render("Tell me which seasonal maps and holidays to add.", True, (170, 190, 210))
         surface.blit(instruction, (50, 164))
     else:
+        scroll_limit = seasonal_maps_scroll_limit(len(SEASONAL_MAPS))
+        scroll_offset = clamp(int(scroll_offset), 0, scroll_limit)
+        previous_clip = surface.get_clip()
+        surface.set_clip(SEASONAL_MAPS_VIEWPORT_RECT)
         for index, (map_name, seasonal_map) in enumerate(SEASONAL_MAPS.items()):
-            row = pygame.Rect(40, 112 + index * 64, WIDTH - 80, 52)
+            row = pygame.Rect(
+                SEASONAL_MAPS_VIEWPORT_RECT.x,
+                SEASONAL_MAPS_VIEWPORT_RECT.y + index * 64 - scroll_offset,
+                SEASONAL_MAPS_VIEWPORT_RECT.width,
+                52,
+            )
             available = is_seasonal_map_available(map_name, today)
             row_color = (55, 100, 75) if available else (48, 54, 66)
             border_color = (160, 225, 175) if available else (105, 115, 130)
@@ -1038,7 +1071,31 @@ def draw_seasonal_maps_menu(surface, today=None):
             surface.blit(name_text, (row.x + 14, row.y + 5))
             surface.blit(holiday_text, (row.x + 14, row.y + 28))
             surface.blit(status_text, (row.right - status_text.get_width() - 14, row.y + 16))
-            map_buttons[map_name] = row
+            visible_row = row.clip(SEASONAL_MAPS_VIEWPORT_RECT)
+            if visible_row:
+                map_buttons[map_name] = visible_row
+        surface.set_clip(previous_clip)
+
+        if scroll_limit:
+            track = pygame.Rect(
+                SEASONAL_MAPS_VIEWPORT_RECT.right + 8,
+                SEASONAL_MAPS_VIEWPORT_RECT.y,
+                8,
+                SEASONAL_MAPS_VIEWPORT_RECT.height,
+            )
+            content_height = SEASONAL_MAPS_VIEWPORT_RECT.height + scroll_limit
+            thumb_height = max(32, track.height * track.height // content_height)
+            thumb_travel = track.height - thumb_height
+            thumb_y = track.y + round(thumb_travel * scroll_offset / scroll_limit)
+            pygame.draw.rect(surface, (45, 54, 70), track, border_radius=4)
+            pygame.draw.rect(
+                surface,
+                (180, 195, 220),
+                (track.x, thumb_y, track.width, thumb_height),
+                border_radius=4,
+            )
+            hint = FONT.render("Scroll to see more", True, (170, 190, 210))
+            surface.blit(hint, (SEASONAL_MAPS_BACK_RECT.right + 24, SEASONAL_MAPS_BACK_RECT.y + 10))
 
     pygame.draw.rect(surface, (85, 105, 145), SEASONAL_MAPS_BACK_RECT, border_radius=6)
     pygame.draw.rect(surface, (180, 205, 245), SEASONAL_MAPS_BACK_RECT, 2, border_radius=6)
@@ -1297,12 +1354,17 @@ class Enemy:
         if self.type == "earth" and self.earth_emerge_timer > 0:
             self.earth_emerge_timer = max(0.0, self.earth_emerge_timer - dt)
             return
-        if self.type == "cake" and self.falling:
+        if self.falling and self.fall_target is not None:
             target_x, target_y = self.fall_target
-            self.y = min(target_y, self.y + 280 * dt)
-            if self.y >= target_y:
-                self.x = target_x
+            dx, dy = target_x - self.x, target_y - self.y
+            distance = math.hypot(dx, dy)
+            step = 280 * dt
+            if distance <= step or distance == 0:
+                self.x, self.y = target_x, target_y
                 self.falling = False
+            else:
+                self.x += dx / distance * step
+                self.y += dy / distance * step
             return
         if self.type == "shielder":
             self.shield_angle += dt * 2.4
@@ -1417,6 +1479,9 @@ class Enemy:
     def draw(self, surface):
         center_x, center_y = int(self.x), int(self.y)
         earth_rumbling = self.type == "earth" and self.earth_rumble_timer > 0
+        if self.falling and self.fall_target is not None:
+            shadow_x, shadow_y = self.fall_target
+            pygame.draw.ellipse(surface, (75, 58, 68), (shadow_x - 17, shadow_y + 7, 34, 8))
         if self.type == "flyer":
             wing_color = (70, 150, 155)
             body_color = (115, 205, 210)
@@ -1507,9 +1572,6 @@ class Enemy:
             pygame.draw.ellipse(surface, (245, 205, 85), (center_x, center_y - 17, 8, 6), 2)
             eye_color = (255, 245, 180)
         elif self.type == "cake":
-            if self.falling and self.fall_target is not None:
-                shadow_x, shadow_y = self.fall_target
-                pygame.draw.ellipse(surface, (75, 58, 68), (shadow_x - 17, shadow_y + 7, 34, 8))
             pygame.draw.rect(surface, (235, 155, 95), (center_x - 14, center_y - 5, 28, 17), border_radius=4)
             pygame.draw.rect(surface, (255, 230, 205), (center_x - 14, center_y - 8, 28, 6), border_radius=3)
             pygame.draw.rect(surface, (245, 185, 125), (center_x - 10, center_y - 15, 20, 9), border_radius=3)
@@ -1521,6 +1583,29 @@ class Enemy:
                 pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
                 pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
             eye_color = (255, 255, 235)
+        elif self.type == "pi":
+            pygame.draw.circle(surface, (110, 75, 165), (center_x, center_y), 18)
+            pygame.draw.circle(surface, (190, 160, 235), (center_x, center_y), 18, 2)
+            pygame.draw.rect(surface, (255, 245, 220), (center_x - 14, center_y - 11, 28, 5), border_radius=2)
+            pygame.draw.rect(surface, (255, 245, 220), (center_x - 10, center_y - 7, 5, 19), border_radius=2)
+            pygame.draw.rect(surface, (255, 245, 220), (center_x + 5, center_y - 7, 5, 19), border_radius=2)
+            eye_color = (255, 255, 230)
+        elif self.type == "pie":
+            pygame.draw.circle(surface, (190, 105, 48), (center_x, center_y), 15)
+            pygame.draw.circle(surface, (245, 195, 115), (center_x, center_y), 12)
+            pygame.draw.polygon(surface, (170, 75, 45), [
+                (center_x - 12, center_y - 8),
+                (center_x + 14, center_y - 3),
+                (center_x + 1, center_y + 13),
+            ])
+            pygame.draw.polygon(surface, (240, 175, 95), [
+                (center_x - 8, center_y - 5),
+                (center_x + 9, center_y - 2),
+                (center_x + 1, center_y + 8),
+            ])
+            pygame.draw.line(surface, (255, 225, 160), (center_x - 5, center_y - 4), (center_x + 5, center_y - 2), 2)
+            pygame.draw.line(surface, (255, 225, 160), (center_x - 1, center_y - 1), (center_x + 4, center_y + 4), 2)
+            eye_color = (255, 255, 225)
         elif self.type == "earth":
             rumbling = self.earth_rumble_timer > 0
             shake = round(math.sin(self.earth_rumble_time * 38) * 3) if rumbling else 0
@@ -1564,7 +1649,7 @@ class Enemy:
             pygame.draw.circle(surface, (215, 55, 65), (center_x, center_y), 12)
             eye_color = (255, 235, 120)
 
-        if not earth_rumbling:
+        if not earth_rumbling and self.type != "pi":
             pygame.draw.circle(surface, eye_color, (center_x - 5, center_y - 3), 3)
             pygame.draw.circle(surface, eye_color, (center_x + 5, center_y - 3), 3)
             pygame.draw.circle(surface, (35, 25, 25), (center_x - 5, center_y - 3), 1)
@@ -2526,6 +2611,74 @@ class Turkey:
         pygame.draw.line(surface, (225, 175, 65), (center_x + 7, body_y + 9), (center_x + 9, body_y + 16), 2)
 
 
+class PiDayFish:
+    COLORS = (
+        (75, 190, 220),
+        (245, 175, 75),
+        (170, 125, 220),
+        (105, 200, 145),
+    )
+    START_POSITIONS = ((110, 75), (330, 145), (550, 485), (755, 555))
+    DROP_COUNTS = (1, 2, 1, 1)
+    SPECIAL_ENEMY_TYPES = (None, None, "pi", "pie")
+
+    def __init__(self, fish_index, drop_interval):
+        self.fish_index = fish_index
+        self.x, self.base_y = self.START_POSITIONS[fish_index]
+        self.y = float(self.base_y)
+        self.direction = 1 if fish_index % 2 == 0 else -1
+        self.speed = 38 + fish_index * 5
+        self.time = 0.0
+        self.drop_timer = random.uniform(*drop_interval)
+
+    def update(self, dt):
+        self.time += dt
+        self.x += self.direction * self.speed * dt
+        if self.x < 36 or self.x > WIDTH - 36:
+            self.direction *= -1
+            self.x = clamp(self.x, 36, WIDTH - 36)
+        self.y = self.base_y + math.sin(self.time * 2.4 + self.fish_index) * 13
+
+    def draw(self, surface):
+        center_x, center_y = round(self.x), round(self.y)
+        facing = self.direction
+        tail_wag = round(math.sin(self.time * 9) * 4)
+        color = self.COLORS[self.fish_index]
+        shadow_color = tuple(max(0, channel - 55) for channel in color)
+        pygame.draw.polygon(surface, shadow_color, [
+            (center_x - facing * 10, center_y),
+            (center_x - facing * 23, center_y - 9 + tail_wag),
+            (center_x - facing * 23, center_y + 9 + tail_wag),
+        ])
+        pygame.draw.ellipse(surface, shadow_color, (center_x - 17, center_y - 11, 34, 22))
+        pygame.draw.ellipse(surface, color, (center_x - 14, center_y - 10, 28, 19))
+        pygame.draw.polygon(surface, color, [
+            (center_x, center_y - 6),
+            (center_x + facing * 8, center_y - 17),
+            (center_x + facing * 12, center_y - 3),
+        ])
+        pygame.draw.circle(surface, (255, 250, 225), (center_x + facing * 8, center_y - 3), 4)
+        pygame.draw.circle(surface, (25, 35, 45), (center_x + facing * 9, center_y - 3), 2)
+        pygame.draw.circle(surface, (220, 245, 245), (center_x - facing * 3, center_y + 2), 3, 1)
+        badge = pygame.Rect(center_x - 10, center_y - 29, 20, 17)
+        pygame.draw.rect(surface, (32, 42, 60), badge, border_radius=5)
+        pygame.draw.rect(surface, (235, 240, 250), badge, 1, border_radius=5)
+        if self.fish_index < 2:
+            count_label = PI_FISH_MARKER_FONT.render(str(self.fish_index + 1), True, (255, 255, 255))
+            surface.blit(count_label, count_label.get_rect(center=badge.center))
+        elif self.fish_index == 2:
+            pygame.draw.line(surface, (255, 255, 255), (center_x - 6, center_y - 24), (center_x + 6, center_y - 24), 2)
+            pygame.draw.line(surface, (255, 255, 255), (center_x - 3, center_y - 23), (center_x - 3, center_y - 15), 2)
+            pygame.draw.line(surface, (255, 255, 255), (center_x + 3, center_y - 23), (center_x + 3, center_y - 15), 2)
+        else:
+            pygame.draw.polygon(surface, (245, 180, 95), [
+                (center_x - 6, center_y - 15),
+                (center_x + 6, center_y - 17),
+                (center_x + 2, center_y - 26),
+            ])
+            pygame.draw.line(surface, (255, 235, 190), (center_x - 3, center_y - 17), (center_x + 3, center_y - 18), 1)
+
+
 class Game:
     def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
@@ -2543,6 +2696,12 @@ class Game:
         self.explosions = []
         self.mines = []
         self.turkey = Turkey() if SEASONAL_MAPS.get(self.map_name, {}).get("turkey") else None
+        pi_day_drop_interval = SEASONAL_MAPS.get(self.map_name, {}).get("pi_day_drop_interval")
+        self.pi_day_fish = (
+            [PiDayFish(index, pi_day_drop_interval) for index in range(4)]
+            if pi_day_drop_interval
+            else []
+        )
         self.paint_dash = PaintDashShooter() if SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash") else None
         self.pumpkin_spotlights = (
             PumpkinSpotlights()
@@ -3423,6 +3582,76 @@ class Game:
         cake.falling = True
         self.enemies.append(cake)
 
+    def random_pi_day_enemy_type(self):
+        available_types = ["ground"]
+        if self.wave_index >= 1:
+            available_types.append("flyer")
+        if self.wave_index >= 2:
+            available_types.append("shooter")
+        if self.wave_index >= 5:
+            available_types.extend(("lightning", "shielder"))
+        if self.wave_index >= 6:
+            available_types.append("ghost")
+        if self.wave_index >= 8:
+            available_types.append("medic")
+        return random.choice(available_types)
+
+    def spawn_pi_day_enemy(self, fish, enemy_type):
+        segment = random.randrange(len(self.path_points) - 1)
+        start_x, start_y = self.path_points[segment]
+        end_x, end_y = self.path_points[segment + 1]
+        progress = random.uniform(0.15, 0.85)
+        target_x = start_x + (end_x - start_x) * progress
+        target_y = start_y + (end_y - start_y) * progress
+
+        wave = WAVES[min(self.wave_index, len(WAVES) - 1)]
+        speed = wave["speed"]
+        if enemy_type == "flyer":
+            speed *= 1.2
+        elif enemy_type == "lightning":
+            speed *= 3.0
+        elif enemy_type == "shielder":
+            speed *= 0.9
+        hp = int(wave["hp"] * (0.9 if enemy_type == "flyer" else 1.2 if enemy_type == "shielder" else 1.0))
+        reward = (
+            wave["reward"]
+            + (8 if enemy_type == "flyer" else 0)
+            + (10 if enemy_type == "shooter" else 0)
+            + (15 if enemy_type == "lightning" else 0)
+            + (18 if enemy_type == "shielder" else 0)
+            + (20 if enemy_type == "ghost" else 0)
+            + (25 if enemy_type == "medic" else 0)
+        )
+        enemy = Enemy(
+            self.path_points,
+            speed=speed,
+            hp=hp,
+            reward=reward,
+            enemy_type=enemy_type,
+        )
+        enemy.segment = segment
+        enemy.x, enemy.y = fish.x, fish.y
+        enemy.fall_target = (target_x, target_y)
+        enemy.falling = True
+        self.enemies.append(enemy)
+        return enemy
+
+    def update_pi_day_fish(self, dt):
+        drop_interval = SEASONAL_MAPS.get(self.map_name, {}).get("pi_day_drop_interval")
+        if drop_interval is None:
+            return
+
+        for fish in self.pi_day_fish:
+            fish.update(dt)
+            fish.drop_timer -= dt
+            if fish.drop_timer > 0:
+                continue
+            special_type = fish.SPECIAL_ENEMY_TYPES[fish.fish_index]
+            for _ in range(fish.DROP_COUNTS[fish.fish_index]):
+                enemy_type = special_type or self.random_pi_day_enemy_type()
+                self.spawn_pi_day_enemy(fish, enemy_type)
+            fish.drop_timer = random.uniform(*drop_interval)
+
     def spawn_earth_enemy(self):
         if not SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval"):
             return
@@ -3537,6 +3766,7 @@ class Game:
             if self.earth_spawn_timer <= 0:
                 self.spawn_earth_enemy()
                 self.earth_spawn_timer = random.uniform(*earth_spawn_interval)
+        self.update_pi_day_fish(dt)
 
         if self.wave_index < len(WAVES) and not self.enemies_paused:
             wave = WAVES[self.wave_index]
@@ -3989,6 +4219,9 @@ class Game:
 
         if self.turkey is not None:
             self.turkey.draw(surface)
+
+        for fish in self.pi_day_fish:
+            fish.draw(surface)
 
         if self.paint_dash is not None:
             self.paint_dash.draw(surface)
@@ -5352,6 +5585,7 @@ def main():
     show_seasonal_menu = False
     seasonal_date = date.today()
     seasonal_calendar_month = seasonal_date.replace(day=1)
+    seasonal_maps_scroll_offset = 0
     seasonal_code_buffer = ""
     seasonal_date_panel_open = False
     seasonal_date_buttons = {}
@@ -5446,6 +5680,12 @@ def main():
                                 seasonal_date_panel_open = False
                                 break
                 continue
+            elif event.type == pygame.MOUSEWHEEL and in_menu and show_seasonal_menu:
+                seasonal_maps_scroll_offset = clamp(
+                    seasonal_maps_scroll_offset - event.y * 45,
+                    0,
+                    seasonal_maps_scroll_limit(len(SEASONAL_MAPS)),
+                )
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
                     if show_backstory:
@@ -5455,6 +5695,30 @@ def main():
                     if show_seasonal_menu:
                         if event.key == pygame.K_ESCAPE:
                             show_seasonal_menu = False
+                        elif event.key == pygame.K_HOME:
+                            seasonal_maps_scroll_offset = 0
+                        elif event.key == pygame.K_END:
+                            seasonal_maps_scroll_offset = seasonal_maps_scroll_limit(len(SEASONAL_MAPS))
+                        elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
+                            scroll_step = (
+                                SEASONAL_MAPS_VIEWPORT_RECT.height
+                                if event.key == pygame.K_PAGEUP
+                                else 64
+                            )
+                            seasonal_maps_scroll_offset = max(
+                                0,
+                                seasonal_maps_scroll_offset - scroll_step,
+                            )
+                        elif event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
+                            scroll_step = (
+                                SEASONAL_MAPS_VIEWPORT_RECT.height
+                                if event.key == pygame.K_PAGEDOWN
+                                else 64
+                            )
+                            seasonal_maps_scroll_offset = min(
+                                seasonal_maps_scroll_limit(len(SEASONAL_MAPS)),
+                                seasonal_maps_scroll_offset + scroll_step,
+                            )
                         continue
                     if show_costume_window and menu_hat_text_editing:
                         if event.key == pygame.K_ESCAPE:
@@ -5804,7 +6068,11 @@ def main():
             if show_backstory:
                 draw_backstory(SCREEN)
             elif show_seasonal_menu:
-                menu_seasonal_map_buttons = draw_seasonal_maps_menu(SCREEN, seasonal_date)
+                menu_seasonal_map_buttons = draw_seasonal_maps_menu(
+                    SCREEN,
+                    seasonal_date,
+                    seasonal_maps_scroll_offset,
+                )
             else:
                 menu_seasonal_map_buttons = {}
                 menu_costume_buttons = draw_map_selection(
