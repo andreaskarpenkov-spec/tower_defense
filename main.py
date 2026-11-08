@@ -815,6 +815,14 @@ SEASONAL_MAPS = {
         "background": (48, 34, 24),
         "diwali_lamps": True,
     },
+    "boom boom": {
+        "holiday": "Lunar New Year",
+        "availability_rule": "lunar_new_year",
+        "availability_label": "Lunar New Year day",
+        "path": MAPS["Classic"],
+        "background": (70, 28, 35),
+        "boom_boom_firework_interval": 12.0,
+    },
 }
 
 MAP_BACKGROUNDS = {
@@ -868,6 +876,8 @@ def is_seasonal_map_available(map_name, today=None):
         return today == holi_date(today.year)
     if seasonal_map.get("availability_rule") == "diwali_day":
         return today == diwali_date(today.year)
+    if seasonal_map.get("availability_rule") == "lunar_new_year":
+        return today == lunar_new_year_date(today.year)
     current_day = (today.month, today.day)
     start_day = seasonal_map["start"]
     end_day = seasonal_map["end"]
@@ -942,6 +952,74 @@ def diwali_date(year):
     new_moon = min(new_moons, key=lambda moment: abs((moment - target).total_seconds()))
     india_local_time = new_moon + timedelta(hours=5, minutes=30)
     return india_local_time.date()
+
+
+def lunar_new_year_date(year):
+    observed_dates = {
+        2025: date(2025, 1, 29),
+        2026: date(2026, 2, 17),
+        2027: date(2027, 2, 6),
+        2028: date(2028, 1, 26),
+        2029: date(2029, 2, 13),
+        2030: date(2030, 2, 3),
+        2031: date(2031, 1, 23),
+        2032: date(2032, 2, 11),
+        2033: date(2033, 1, 31),
+        2034: date(2034, 2, 19),
+        2035: date(2035, 2, 8),
+    }
+    if year in observed_dates:
+        return observed_dates[year]
+
+    target = datetime(year, 2, 5, 12)
+    target_julian_day = 2451545 + (target - datetime(2000, 1, 1, 12)).total_seconds() / 86400
+    phase_index = round((target_julian_day - 2451550.09766) / 29.530588861)
+    new_moons = []
+    for k in range(phase_index - 1, phase_index + 2):
+        t = k / 1236.85
+        eccentricity = 1 - 0.002516 * t - 0.0000074 * t * t
+        mean_anomaly = math.radians(
+            2.5534 + 29.1053567 * k - 0.0000014 * t * t - 0.00000011 * t**3
+        )
+        moon_anomaly = math.radians(
+            201.5643 + 385.81693528 * k + 0.0107582 * t * t
+            + 0.00001238 * t**3 - 0.000000058 * t**4
+        )
+        latitude_argument = math.radians(
+            160.7108 + 390.67050284 * k - 0.0016118 * t * t
+            - 0.00000227 * t**3 + 0.000000011 * t**4
+        )
+        ascending_node = math.radians(
+            124.7746 - 1.56375588 * k + 0.0020672 * t * t + 0.00000215 * t**3
+        )
+        correction = (
+            -0.40720 * math.sin(moon_anomaly)
+            + 0.17241 * eccentricity * math.sin(mean_anomaly)
+            + 0.01608 * math.sin(2 * moon_anomaly)
+            + 0.01039 * math.sin(2 * latitude_argument)
+            + 0.00739 * eccentricity * math.sin(moon_anomaly - mean_anomaly)
+            - 0.00514 * eccentricity * math.sin(moon_anomaly + mean_anomaly)
+            + 0.00208 * eccentricity**2 * math.sin(2 * mean_anomaly)
+            - 0.00111 * math.sin(moon_anomaly - 2 * latitude_argument)
+            - 0.00057 * math.sin(moon_anomaly + 2 * latitude_argument)
+            + 0.00056 * eccentricity * math.sin(2 * moon_anomaly + mean_anomaly)
+            - 0.00042 * math.sin(3 * moon_anomaly)
+            + 0.00042 * eccentricity * math.sin(mean_anomaly + 2 * latitude_argument)
+            + 0.00038 * eccentricity * math.sin(mean_anomaly - 2 * latitude_argument)
+            - 0.00024 * math.sin(2 * moon_anomaly - mean_anomaly)
+            - 0.00017 * math.sin(ascending_node)
+        )
+        julian_day = (
+            2451550.09766 + 29.530588861 * k + 0.00015437 * t**2
+            - 0.00000015 * t**3 + 0.00000000073 * t**4 + correction
+        )
+        utc_new_moon = datetime(2000, 1, 1, 12) + timedelta(days=julian_day - 2451545)
+        china_date = (utc_new_moon + timedelta(hours=8)).date()
+        if date(year, 1, 21) <= china_date <= date(year, 2, 20):
+            new_moons.append(china_date)
+    if not new_moons:
+        raise ValueError(f"Could not determine Lunar New Year for {year}")
+    return new_moons[0]
 
 
 def holi_date(year):
@@ -2384,6 +2462,54 @@ class Explosion:
         pygame.draw.circle(surface, (255, 220, 160), (int(self.x), int(self.y)), max(4, int(glow_radius * 0.18)))
 
 
+class SeasonalFirework:
+    COLORS = ((255, 75, 65), (255, 205, 70), (90, 225, 190), (180, 110, 255))
+
+    def __init__(self, x, y, target_x, target_y, damage, glitchy=False):
+        self.x = float(x)
+        self.y = float(y)
+        self.target_x = float(target_x)
+        self.target_y = float(target_y)
+        self.damage = damage
+        self.glitchy = glitchy
+        self.speed = 360 if not glitchy else 420
+        self.radius = 13
+        self.hit_targets = set()
+        self.color = (100, 245, 255) if glitchy else random.choice(self.COLORS)
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        distance = math.hypot(dx, dy)
+        self.vx = 0.0 if distance == 0 else dx / distance
+        self.vy = 0.0 if distance == 0 else dy / distance
+        self.remaining_distance = distance
+        self.active = True
+        self.time = 0.0
+
+    def update(self, dt):
+        start = (self.x, self.y)
+        self.time += dt
+        step = min(self.speed * dt, self.remaining_distance)
+        self.x += self.vx * step
+        self.y += self.vy * step
+        self.remaining_distance -= step
+        if self.remaining_distance <= 0:
+            self.active = False
+        return start, (self.x, self.y)
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        if self.glitchy:
+            jitter = 4 if int(self.time * 30) % 2 else -4
+            pygame.draw.line(surface, (255, 55, 190), (x - 16, y + 9), (x + jitter, y - 10), 3)
+            pygame.draw.line(surface, (70, 245, 255), (x + 12, y + 12), (x + jitter, y - 10), 2)
+            pygame.draw.circle(surface, (255, 255, 255), (x + jitter, y - 10), 5)
+        else:
+            tail_x = round(x - self.vx * 18)
+            tail_y = round(y - self.vy * 18)
+            pygame.draw.line(surface, self.color, (tail_x, tail_y), (x, y), 4)
+            pygame.draw.circle(surface, (255, 245, 190), (x, y), 5)
+
+
 class BombProjectile:
     def __init__(
         self,
@@ -3019,6 +3145,9 @@ class Game:
             if pi_day_drop_interval
             else []
         )
+        boom_boom_interval = SEASONAL_MAPS.get(self.map_name, {}).get("boom_boom_firework_interval")
+        self.boom_boom_timer = boom_boom_interval or 0.0
+        self.boom_boom_fireworks = []
         self.paint_dash = PaintDashShooter() if SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash") else None
         self.pumpkin_spotlights = (
             PumpkinSpotlights()
@@ -3975,6 +4104,75 @@ class Game:
                 self.spawn_pi_day_enemy(fish, enemy_type)
             fish.drop_timer = random.uniform(*drop_interval)
 
+    def update_boom_boom_fireworks(self, dt):
+        interval = SEASONAL_MAPS.get(self.map_name, {}).get("boom_boom_firework_interval")
+        if interval is None:
+            return
+
+        self.boom_boom_timer -= dt
+        if self.boom_boom_timer <= 0:
+            targets = [
+                enemy for enemy in self.enemies
+                if not enemy.is_dead() and not enemy.reached_goal()
+            ]
+            if targets:
+                target = random.choice(targets)
+                start_x = random.uniform(35, WIDTH - 35)
+                self.boom_boom_fireworks.append(
+                    SeasonalFirework(start_x, -24, target.x, target.y, damage=80)
+                )
+            self.boom_boom_timer = interval
+
+        for firework in list(self.boom_boom_fireworks):
+            (start_x, start_y), (end_x, end_y) = firework.update(dt)
+            targets = self.towers if firework.glitchy else self.enemies
+            for target in list(targets):
+                if target in firework.hit_targets:
+                    continue
+                if firework.glitchy:
+                    if target.health <= 0:
+                        continue
+                elif target.is_dead() or target.reached_goal():
+                    continue
+
+                collision_radius = firework.radius + (16 if firework.glitchy else 14)
+                if self._distance_to_segment(
+                    target.x, target.y, start_x, start_y, end_x, end_y
+                ) > collision_radius:
+                    continue
+
+                firework.hit_targets.add(target)
+                if firework.glitchy:
+                    target.health -= firework.damage
+                    explosion_color = (130, 75, 255)
+                else:
+                    target.hp -= firework.damage
+                    explosion_color = firework.color
+                    if target.is_dead():
+                        towers = [tower for tower in self.towers if tower.health > 0]
+                        if towers:
+                            tower = random.choice(towers)
+                            self.boom_boom_fireworks.append(
+                                SeasonalFirework(
+                                    target.x,
+                                    target.y,
+                                    tower.x,
+                                    tower.y,
+                                    damage=35,
+                                    glitchy=True,
+                                )
+                            )
+                self.explosions.append(Explosion(
+                    target.x,
+                    target.y,
+                    radius=26,
+                    color=explosion_color,
+                    duration=0.25,
+                ))
+
+            if not firework.active:
+                self.boom_boom_fireworks.remove(firework)
+
     def spawn_earth_enemy(self):
         if not SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval"):
             return
@@ -4111,6 +4309,7 @@ class Game:
             self.separate_enemies()
 
         self.update_homework_effect(dt)
+        self.update_boom_boom_fireworks(dt)
         if self.diwali_lamps:
             for tower in self.towers:
                 if tower.burning_timer > 0:
@@ -4547,6 +4746,9 @@ class Game:
 
         for explosion in self.explosions:
             explosion.draw(surface)
+
+        for firework in self.boom_boom_fireworks:
+            firework.draw(surface)
 
         for enemy in self.enemies:
             enemy.draw(surface)

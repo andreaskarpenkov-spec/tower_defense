@@ -39,6 +39,22 @@ class SandboxModeTest(unittest.TestCase):
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2026, 12, 27)))
         self.assertFalse(main.is_seasonal_map_available(map_name, date(2027, 1, 1)))
 
+    def test_boom_boom_is_available_on_lunar_new_year(self):
+        lunar_new_year_dates = {
+            2025: date(2025, 1, 29),
+            2026: date(2026, 2, 17),
+            2027: date(2027, 2, 6),
+            2028: date(2028, 1, 26),
+        }
+        for year, new_year in lunar_new_year_dates.items():
+            with self.subTest(year=year):
+                self.assertEqual(main.lunar_new_year_date(year), new_year)
+                self.assertTrue(main.is_seasonal_map_available("boom boom", new_year))
+                self.assertFalse(main.is_seasonal_map_available("boom boom", new_year - main.timedelta(days=1)))
+                self.assertFalse(main.is_seasonal_map_available("boom boom", new_year + main.timedelta(days=1)))
+
+        self.assertEqual(main.get_map_path("boom boom"), MAPS["Classic"])
+
     def test_gobble_gobble_is_available_during_us_thanksgiving_week(self):
         map_name = "Gobble Gobble"
         thanksgiving_dates = {
@@ -443,6 +459,52 @@ class SandboxModeTest(unittest.TestCase):
         )
         self.assertFalse(burst.update(2.0))
 
+    def test_boom_boom_launches_a_firework_every_twelve_seconds(self):
+        game = Game(main.get_map_path("boom boom"), map_name="boom boom", sandbox=True)
+        game.enemies_paused = True
+        game.wave_ready = True
+        target = Enemy(MAPS["Classic"], speed=0, hp=200, reward=1)
+        target.x, target.y = 200, 200
+        game.enemies = [target]
+        classic = Game(MAPS["Classic"], sandbox=True)
+
+        with patch.object(main.random, "choice", return_value=target):
+            with patch.object(main.random, "uniform", return_value=200):
+                game.update(11.9)
+                self.assertEqual(game.boom_boom_fireworks, [])
+                game.update(0.11)
+
+        self.assertEqual(len(game.boom_boom_fireworks), 1)
+        self.assertFalse(game.boom_boom_fireworks[0].glitchy)
+        self.assertEqual(game.boom_boom_timer, 12.0)
+        self.assertEqual(classic.boom_boom_fireworks, [])
+
+    def test_boom_boom_firework_damages_enemies_and_kills_spawn_tower_harming_fireworks(self):
+        game = Game(main.get_map_path("boom boom"), map_name="boom boom", sandbox=True)
+        tower = Tower(180, 100)
+        wounded_enemy = Enemy(MAPS["Classic"], speed=0, hp=200, reward=1)
+        killed_enemy = Enemy(MAPS["Classic"], speed=0, hp=80, reward=1)
+        wounded_enemy.x, wounded_enemy.y = 60, 100
+        killed_enemy.x, killed_enemy.y = 100, 100
+        game.towers = [tower]
+        game.enemies = [wounded_enemy, killed_enemy]
+        game.boom_boom_fireworks = [
+            main.SeasonalFirework(0, 100, 200, 100, damage=80)
+        ]
+
+        game.update_boom_boom_fireworks(1.0)
+
+        self.assertEqual(wounded_enemy.hp, 120)
+        self.assertTrue(killed_enemy.is_dead())
+        glitchy_fireworks = [
+            firework for firework in game.boom_boom_fireworks if firework.glitchy
+        ]
+        self.assertEqual(len(glitchy_fireworks), 1)
+        self.assertEqual((glitchy_fireworks[0].x, glitchy_fireworks[0].y), (100, 100))
+
+        game.update_boom_boom_fireworks(0.25)
+        self.assertEqual(tower.health, 85)
+
     def test_homework_is_available_during_the_monday_to_sunday_week_containing_august_19(self):
         map_name = "homework"
         expected_ranges = {
@@ -716,6 +778,7 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.SEASONAL_MAPS["1 fish, 2 fish, pi fish, pie fish"]["holiday"], "Pi Day")
         self.assertEqual(main.SEASONAL_MAPS["hat's away!"]["holiday"], "St. Patrick's Day")
         self.assertEqual(main.SEASONAL_MAPS["circle of lamps"]["holiday"], "Diwali")
+        self.assertEqual(main.SEASONAL_MAPS["boom boom"]["holiday"], "Lunar New Year")
 
     def test_seasonal_maps_menu_scroll_reveals_bottom_entries_inside_viewport(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
@@ -729,10 +792,10 @@ class SandboxModeTest(unittest.TestCase):
             scroll_offset=scroll_limit + 100,
         )
 
-        self.assertNotIn("circle of lamps", top_buttons)
-        self.assertEqual(bottom_buttons["circle of lamps"].height, 52)
-        self.assertEqual(bottom_buttons["circle of lamps"].bottom, main.SEASONAL_MAPS_VIEWPORT_RECT.bottom)
-        self.assertLess(bottom_buttons["circle of lamps"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
+        self.assertNotIn("boom boom", top_buttons)
+        self.assertEqual(bottom_buttons["boom boom"].height, 52)
+        self.assertEqual(bottom_buttons["boom boom"].bottom, main.SEASONAL_MAPS_VIEWPORT_RECT.bottom)
+        self.assertLess(bottom_buttons["boom boom"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"
