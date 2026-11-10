@@ -55,6 +55,31 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertEqual(main.get_map_path("boom boom"), MAPS["Classic"])
 
+    def test_independence_is_available_only_on_july_fourth(self):
+        map_name = "Independence!"
+        independence_day = date(2026, 7, 4)
+
+        self.assertTrue(main.is_seasonal_map_available(map_name, independence_day))
+        self.assertFalse(main.is_seasonal_map_available(map_name, independence_day - main.timedelta(days=1)))
+        self.assertFalse(main.is_seasonal_map_available(map_name, independence_day + main.timedelta(days=1)))
+        self.assertEqual(main.get_map_path(map_name), MAPS["Classic"])
+
+    def test_easter_bunny_map_is_available_on_easter_sunday(self):
+        easter_dates = {
+            2025: date(2025, 4, 20),
+            2026: date(2026, 4, 5),
+            2027: date(2027, 3, 28),
+            2028: date(2028, 4, 16),
+        }
+        map_name = "That's the easter bunny!"
+        for year, easter in easter_dates.items():
+            with self.subTest(year=year):
+                self.assertEqual(main.easter_date(year), easter)
+                self.assertTrue(main.is_seasonal_map_available(map_name, easter))
+                self.assertFalse(main.is_seasonal_map_available(map_name, easter - main.timedelta(days=1)))
+                self.assertFalse(main.is_seasonal_map_available(map_name, easter + main.timedelta(days=1)))
+        self.assertEqual(main.get_map_path(map_name), MAPS["Classic"])
+
     def test_gobble_gobble_is_available_during_us_thanksgiving_week(self):
         map_name = "Gobble Gobble"
         thanksgiving_dates = {
@@ -779,6 +804,8 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(main.SEASONAL_MAPS["hat's away!"]["holiday"], "St. Patrick's Day")
         self.assertEqual(main.SEASONAL_MAPS["circle of lamps"]["holiday"], "Diwali")
         self.assertEqual(main.SEASONAL_MAPS["boom boom"]["holiday"], "Lunar New Year")
+        self.assertEqual(main.SEASONAL_MAPS["Independence!"]["holiday"], "Independence Day")
+        self.assertEqual(main.SEASONAL_MAPS["That's the easter bunny!"]["holiday"], "Easter")
 
     def test_seasonal_maps_menu_scroll_reveals_bottom_entries_inside_viewport(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
@@ -792,10 +819,11 @@ class SandboxModeTest(unittest.TestCase):
             scroll_offset=scroll_limit + 100,
         )
 
-        self.assertNotIn("boom boom", top_buttons)
-        self.assertEqual(bottom_buttons["boom boom"].height, 52)
-        self.assertEqual(bottom_buttons["boom boom"].bottom, main.SEASONAL_MAPS_VIEWPORT_RECT.bottom)
-        self.assertLess(bottom_buttons["boom boom"].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
+        map_name = "That's the easter bunny!"
+        self.assertNotIn(map_name, top_buttons)
+        self.assertEqual(bottom_buttons[map_name].height, 52)
+        self.assertEqual(bottom_buttons[map_name].bottom, main.SEASONAL_MAPS_VIEWPORT_RECT.bottom)
+        self.assertLess(bottom_buttons[map_name].bottom, main.SEASONAL_MAPS_BACK_RECT.top)
 
     def test_present_maze_reuses_spiral_path_and_draws_side_presents(self):
         map_name = "present maze"
@@ -893,6 +921,89 @@ class SandboxModeTest(unittest.TestCase):
         shooter.time_since_shot = 0.0
         shooter.update(1.0, [nova])
         self.assertEqual(shooter.projectiles, [])
+
+    def test_independence_map_converts_a_random_shooter_every_ten_seconds(self):
+        game = Game(main.get_map_path("Independence!"), map_name="Independence!", sandbox=True)
+        game.wave_ready = True
+        shooter = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="shooter")
+        other_shooter = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="shooter")
+        game.enemies = [shooter, other_shooter]
+
+        with patch.object(main.random, "choice", return_value=other_shooter):
+            game.update(9.9)
+            self.assertEqual(other_shooter.independence_ally_timer, 0)
+            game.update(0.11)
+
+        self.assertEqual(other_shooter.independence_ally_timer, 20.0)
+        self.assertEqual(shooter.independence_ally_timer, 0)
+
+    def test_independence_shooter_targets_enemies_and_towers_ignore_it(self):
+        path = [(40, 100), (800, 100)]
+        shooter = Enemy(path, speed=0, hp=100, reward=1, enemy_type="shooter")
+        target = Enemy(path, speed=0, hp=100, reward=1)
+        shooter.x, shooter.y = 100, 100
+        target.x, target.y = 120, 100
+        shooter.independence_ally_timer = 20
+        shooter.update(1.0, [Tower(110, 110)], [shooter, target])
+
+        self.assertEqual(len(shooter.projectiles), 1)
+        self.assertIs(shooter.projectiles[0].target, target)
+
+        ally = Enemy(path, speed=0, hp=100, reward=1, enemy_type="shooter")
+        ally.x, ally.y = 110, 100
+        ally.independence_ally_timer = 20
+        regular = Enemy(path, speed=0, hp=100, reward=1)
+        regular.x, regular.y = 120, 100
+        tower = Tower(100, 100, "basic")
+        tower.update(1.0, [ally, regular])
+
+        self.assertIs(tower.target, regular)
+        player_shot = main.Projectile(100, 100, ally, 20, (255, 255, 255))
+        self.assertFalse(player_shot.update(0.1))
+
+    def test_independence_shooter_disappears_after_twenty_seconds_without_reward(self):
+        game = Game(main.get_map_path("Independence!"), map_name="Independence!", sandbox=True)
+        game.wave_ready = True
+        game.independence_shooter_timer = 9.0
+        shooter = Enemy(MAPS["Classic"], speed=0, hp=100, reward=50, enemy_type="shooter")
+        shooter.independence_ally_timer = 0.1
+        game.enemies = [shooter]
+        money = game.money
+
+        game.update(0.11)
+
+        self.assertNotIn(shooter, game.enemies)
+        self.assertEqual(game.money, money)
+
+    def test_easter_bunny_throws_eggs_that_hatch_into_chocolate_monsters(self):
+        map_name = "That's the easter bunny!"
+        game = Game(main.get_map_path(map_name), map_name=map_name, sandbox=True)
+        classic = Game(MAPS["Classic"], map_name="Classic", sandbox=True)
+        game.easter_bunny.throw_timer = 0.1
+        game.wave_ready = True
+
+        with patch.object(main.random, "randrange", return_value=2):
+            with patch.object(main.random, "uniform", return_value=0.5):
+                game.update_easter_bunny(0.11)
+
+        self.assertEqual(len(game.easter_eggs), 1)
+        egg = game.easter_eggs[0]
+        self.assertEqual(egg.segment, 2)
+        self.assertFalse(egg.landed)
+
+        egg.landed = True
+        egg.hatch_timer = 0.1
+        game.update_easter_bunny(0.1)
+
+        self.assertEqual(game.easter_eggs, [])
+        self.assertEqual(len(game.enemies), 1)
+        chocolate = game.enemies[0]
+        self.assertEqual(chocolate.type, "chocolate")
+        self.assertEqual(chocolate.segment, 2)
+        self.assertEqual((chocolate.x, chocolate.y), (egg.target_x, egg.target_y))
+        self.assertIsNotNone(game.easter_bunny)
+        self.assertIsNone(classic.easter_bunny)
+        self.assertIn("chocolate", main.BESTIARY)
 
     def test_walker_crossing_freeze_tower_unlocks_and_saves_cactus(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
@@ -1189,6 +1300,24 @@ class SandboxModeTest(unittest.TestCase):
             finally:
                 main.SAVE_FILE = original_save_file
         finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_saving_stale_progress_does_not_lower_highest_cleared_wave(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "highest_cleared_wave": 5}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            save_unlocks({"basic"}, highest_cleared_wave=2)
+            self.assertEqual(main.load_highest_cleared_wave(), 5)
+
+            save_unlocks({"basic"})
+            self.assertEqual(main.load_highest_cleared_wave(), 5)
+        finally:
+            main.SAVE_FILE = original_save_file
             if os.path.exists(save_path):
                 os.remove(save_path)
 

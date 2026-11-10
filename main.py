@@ -245,7 +245,7 @@ BESTIARY = {
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
     "pi": {"name": "Pi", "speed": "standard", "notes": "A Pi Day enemy shaped like the Greek letter pi."},
     "pie": {"name": "Pie", "speed": "standard", "notes": "A Pi Day enemy shaped like a slice of pie."},
-
+    "chocolate": {"name": "Chocolate Monster", "speed": "standard", "notes": "Hatches from an Easter egg on That's the easter bunny!."},
     "earth": {"name": "Earth", "speed": "standard", "notes": "An Earth Day enemy that emerges away from the path and joins the route."},
 }
 ACHIEVEMENT_POPUP_SECONDS = 5.0
@@ -542,8 +542,17 @@ def save_unlocks(unlocked_towers, win_coins=0, unlocked_maps=None, highest_clear
     try:
         if unlocked_maps is None:
             unlocked_maps = load_unlocked_maps()
+        saved_highest_cleared_wave = load_highest_cleared_wave()
         if highest_cleared_wave is None:
-            highest_cleared_wave = load_highest_cleared_wave()
+            highest_cleared_wave = saved_highest_cleared_wave
+        else:
+            requested_highest_cleared_wave = int(highest_cleared_wave)
+            if not 0 <= requested_highest_cleared_wave <= len(WAVES):
+                requested_highest_cleared_wave = saved_highest_cleared_wave
+            highest_cleared_wave = max(
+                saved_highest_cleared_wave,
+                requested_highest_cleared_wave,
+            )
         if achievements is None:
             achievements = load_achievements()
         if stickman_costumes is None:
@@ -823,6 +832,25 @@ SEASONAL_MAPS = {
         "background": (70, 28, 35),
         "boom_boom_firework_interval": 12.0,
     },
+    "Independence!": {
+        "holiday": "Independence Day",
+        "availability_label": "July 4",
+        "start": (7, 4),
+        "end": (7, 4),
+        "path": MAPS["Classic"],
+        "background": (36, 44, 68),
+        "independence_shooter_interval": 10.0,
+        "independence_shooter_duration": 20.0,
+    },
+    "That's the easter bunny!": {
+        "holiday": "Easter",
+        "availability_rule": "easter_day",
+        "availability_label": "Easter Sunday",
+        "path": MAPS["Classic"],
+        "background": (70, 88, 65),
+        "easter_egg_interval": 15.0,
+        "easter_egg_hatch_delay": 4.0,
+    },
 }
 
 MAP_BACKGROUNDS = {
@@ -878,6 +906,8 @@ def is_seasonal_map_available(map_name, today=None):
         return today == diwali_date(today.year)
     if seasonal_map.get("availability_rule") == "lunar_new_year":
         return today == lunar_new_year_date(today.year)
+    if seasonal_map.get("availability_rule") == "easter_day":
+        return today == easter_date(today.year)
     current_day = (today.month, today.day)
     start_day = seasonal_map["start"]
     end_day = seasonal_map["end"]
@@ -893,6 +923,21 @@ def thanksgiving_date(year):
         if week[calendar.THURSDAY]
     ]
     return date(year, 11, thursdays[3])
+
+
+def easter_date(year):
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = (h + l - 7 * m + 114) % 31 + 1
+    return date(year, month, day)
 
 
 def diwali_date(year):
@@ -1453,6 +1498,7 @@ class Enemy:
         self.earth_emerge_timer = 0.0
         self.homework_frozen_timer = 0.0
         self.homework_animation_time = 0.0
+        self.independence_ally_timer = 0.0
 
     def blocks_projectile_path(self, start_x, start_y, end_x, end_y, projectile_radius=5):
         if self.type != "shielder":
@@ -1495,7 +1541,7 @@ class Enemy:
             return True
         return self.ghost_visible
 
-    def update(self, dt, towers):
+    def update(self, dt, towers, enemies=None):
         if self.finished:
             return
         if self.homework_frozen_timer > 0:
@@ -1593,15 +1639,33 @@ class Enemy:
         if self.type == "shooter":
             self.time_since_shot += dt
             if self.time_since_shot >= self.cooldown:
-                self.time_since_shot = 0.0
-                if towers:
-                    eligible_towers = [
-                        tower for tower in towers
-                        if tower.type != "nova" and not tower.shooter_immunity
+                if self.independence_ally_timer > 0:
+                    targets = [
+                        enemy for enemy in (enemies or [])
+                        if enemy is not self
+                        and enemy.independence_ally_timer <= 0
+                        and not enemy.is_dead()
+                        and not enemy.reached_goal()
                     ]
-                    if eligible_towers:
-                        target_tower = min(eligible_towers, key=lambda tower: math.hypot(tower.x - self.x, tower.y - self.y))
-                        self.projectiles.append(ShooterProjectile(self.x, self.y, target_tower, self.attack_damage))
+                    if targets:
+                        target = min(
+                            targets,
+                            key=lambda enemy: math.hypot(enemy.x - self.x, enemy.y - self.y),
+                        )
+                        self.projectiles.append(
+                            ShooterProjectile(self.x, self.y, target, self.attack_damage)
+                        )
+                        self.time_since_shot = 0.0
+                else:
+                    self.time_since_shot = 0.0
+                    if towers:
+                        eligible_towers = [
+                            tower for tower in towers
+                            if tower.type != "nova" and not tower.shooter_immunity
+                        ]
+                        if eligible_towers:
+                            target_tower = min(eligible_towers, key=lambda tower: math.hypot(tower.x - self.x, tower.y - self.y))
+                            self.projectiles.append(ShooterProjectile(self.x, self.y, target_tower, self.attack_damage))
             step = self.speed * dt
             if step >= distance:
                 self.x, self.y = tx, ty
@@ -1740,6 +1804,21 @@ class Enemy:
                 pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
                 pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
             eye_color = (255, 255, 235)
+        elif self.type == "chocolate":
+            pygame.draw.polygon(surface, (83, 43, 35), [
+                (center_x - 15, center_y - 8),
+                (center_x - 9, center_y - 17),
+                (center_x, center_y - 12),
+                (center_x + 9, center_y - 17),
+                (center_x + 15, center_y - 6),
+                (center_x + 12, center_y + 11),
+                (center_x, center_y + 18),
+                (center_x - 12, center_y + 11),
+            ])
+            pygame.draw.circle(surface, (133, 72, 48), (center_x, center_y), 12)
+            pygame.draw.circle(surface, (205, 143, 88), (center_x - 5, center_y - 5), 3)
+            pygame.draw.circle(surface, (205, 143, 88), (center_x + 5, center_y + 5), 3)
+            eye_color = (255, 230, 160)
         elif self.type == "pi":
             pygame.draw.circle(surface, (110, 75, 165), (center_x, center_y), 18)
             pygame.draw.circle(surface, (190, 160, 235), (center_x, center_y), 18, 2)
@@ -1863,6 +1942,8 @@ class Enemy:
                 3,
             )
             pygame.draw.circle(surface, (55, 45, 35), (center_x + 5, center_y - 4 - pencil_lift), 2)
+        if self.independence_ally_timer > 0:
+            pygame.draw.circle(surface, (110, 220, 255), (center_x, center_y), 23, 3)
 
     def is_dead(self):
         return self.hp <= 0
@@ -1946,6 +2027,7 @@ class Tower:
                 for enemy in enemies
                 if not enemy.is_dead()
                 and not enemy.reached_goal()
+                and enemy.independence_ally_timer <= 0
                 and (enemy.type != "ghost" or enemy.is_visible())
                 and math.hypot(enemy.x - self.x, enemy.y - self.y) <= 28
             ]
@@ -1988,7 +2070,7 @@ class Tower:
         nearest = None
         best_dist = float("inf")
         for enemy in enemies:
-            if enemy.is_dead() or enemy.reached_goal():
+            if enemy.is_dead() or enemy.reached_goal() or enemy.independence_ally_timer > 0:
                 continue
             if enemy.type == "ghost" and not enemy.is_visible() and self.type != "phantom":
                 continue
@@ -2190,7 +2272,12 @@ class Projectile:
         self.active = True
 
     def update(self, dt):
-        if not self.active or self.target.is_dead() or self.target.reached_goal():
+        if (
+            not self.active
+            or self.target.is_dead()
+            or self.target.reached_goal()
+            or getattr(self.target, "independence_ally_timer", 0) > 0
+        ):
             self.active = False
             return False
 
@@ -2349,7 +2436,12 @@ class FreezeProjectile(Projectile):
         self.slow_time = slow_time
 
     def update(self, dt):
-        if not self.active or self.target.is_dead() or self.target.reached_goal():
+        if (
+            not self.active
+            or self.target.is_dead()
+            or self.target.reached_goal()
+            or getattr(self.target, "independence_ally_timer", 0) > 0
+        ):
             self.active = False
             return False
 
@@ -2395,7 +2487,12 @@ class ShooterProjectile:
         self.active = True
 
     def update(self, dt):
-        if not self.active or self.target is None or self.target.is_dead():
+        if (
+            not self.active
+            or self.target is None
+            or self.target.is_dead()
+            or getattr(self.target, "independence_ally_timer", 0) > 0
+        ):
             self.active = False
             return False
         if hasattr(self.target, "reached_goal") and self.target.reached_goal():
@@ -2542,7 +2639,12 @@ class BombProjectile:
         self.trail_timer = 0.0
 
     def _apply_damage(self, enemy):
-        if enemy is None or enemy.is_dead() or enemy.reached_goal():
+        if (
+            enemy is None
+            or enemy.is_dead()
+            or enemy.reached_goal()
+            or enemy.independence_ally_timer > 0
+        ):
             return
         if hasattr(enemy, "health"):
             enemy.health -= self.damage
@@ -2555,7 +2657,7 @@ class BombProjectile:
         for enemy in self.enemies:
             if enemy is self.target:
                 continue
-            if enemy.is_dead() or enemy.reached_goal():
+            if enemy.is_dead() or enemy.reached_goal() or enemy.independence_ally_timer > 0:
                 continue
             if math.hypot(enemy.x - self.x, enemy.y - self.y) <= self.splash_radius:
                 damage = self.damage * 0.7
@@ -2572,7 +2674,12 @@ class BombProjectile:
         )
 
     def update(self, dt):
-        if not self.active or self.target is None or self.target.is_dead():
+        if (
+            not self.active
+            or self.target is None
+            or self.target.is_dead()
+            or getattr(self.target, "independence_ally_timer", 0) > 0
+        ):
             self.active = False
             return False
         if hasattr(self.target, "reached_goal") and self.target.reached_goal():
@@ -2630,7 +2737,7 @@ class Mine:
 
     def update(self, enemies):
         for enemy in enemies:
-            if enemy.is_dead() or enemy.reached_goal():
+            if enemy.is_dead() or enemy.reached_goal() or enemy.independence_ally_timer > 0:
                 continue
             if math.hypot(enemy.x - self.x, enemy.y - self.y) <= self.radius:
                 enemy.hp -= self.damage
@@ -2710,7 +2817,7 @@ class Walker:
 
         self.hit_timer = max(0.0, self.hit_timer - dt)
         for enemy in enemies:
-            if enemy.is_dead() or enemy.reached_goal():
+            if enemy.is_dead() or enemy.reached_goal() or enemy.independence_ally_timer > 0:
                 continue
             if math.hypot(enemy.x - self.x, enemy.y - self.y) <= self.radius + 12:
                 if self.hit_timer <= 0.0:
@@ -3115,6 +3222,115 @@ class DiwaliLamp:
         pygame.draw.circle(surface, (255, 245, 185), (x, y - 6 - flicker), 3)
 
 
+class EasterEgg:
+    def __init__(self, x, y, target_x, target_y, segment, hatch_delay=4.0):
+        self.start_x = float(x)
+        self.start_y = float(y)
+        self.x = float(x)
+        self.y = float(y)
+        self.target_x = float(target_x)
+        self.target_y = float(target_y)
+        self.segment = segment
+        self.hatch_delay = hatch_delay
+        self.flight_duration = max(
+            0.3,
+            math.hypot(target_x - x, target_y - y) / 330,
+        )
+        self.flight_time = 0.0
+        self.landed = False
+        self.hatch_timer = hatch_delay
+
+    def update(self, dt):
+        if not self.landed:
+            self.flight_time = min(self.flight_duration, self.flight_time + dt)
+            progress = self.flight_time / self.flight_duration
+            self.x = self.start_x + (self.target_x - self.start_x) * progress
+            arc = math.sin(progress * math.pi) * 55
+            self.y = self.start_y + (self.target_y - self.start_y) * progress - arc
+            if progress >= 1:
+                self.landed = True
+                self.x = self.target_x
+                self.y = self.target_y
+        else:
+            self.hatch_timer = max(0.0, self.hatch_timer - dt)
+        return self.landed and self.hatch_timer <= 0
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        pygame.draw.ellipse(surface, (75, 50, 35), (x - 11, y + 9, 22, 6))
+        pygame.draw.ellipse(surface, (255, 235, 215), (x - 9, y - 12, 18, 24))
+        pygame.draw.ellipse(surface, (220, 70, 95), (x - 9, y - 3, 18, 5))
+        if self.landed and self.hatch_timer < 1.5:
+            crack_y = y - 4
+            pygame.draw.line(surface, (135, 85, 55), (x - 4, crack_y - 6), (x, crack_y), 2)
+            pygame.draw.line(surface, (135, 85, 55), (x, crack_y), (x - 2, crack_y + 6), 2)
+            pygame.draw.line(surface, (135, 85, 55), (x, crack_y), (x + 5, crack_y + 4), 2)
+
+
+class EasterBunny:
+    def __init__(self, egg_interval=15.0, hatch_delay=4.0):
+        self.x = WIDTH / 2
+        self.y = HEIGHT / 2
+        self.vx = 100.0
+        self.vy = 65.0
+        self.turn_timer = 0.0
+        self.run_time = 0.0
+        self.throw_timer = egg_interval
+        self.egg_interval = egg_interval
+        self.hatch_delay = hatch_delay
+
+    def update(self, dt, eggs, path_points):
+        self.run_time += dt
+        self.turn_timer -= dt
+        if self.turn_timer <= 0:
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(80, 140)
+            self.vx = math.cos(angle) * speed
+            self.vy = math.sin(angle) * speed
+            self.turn_timer = random.uniform(0.8, 1.8)
+
+        self.x += self.vx * dt
+        self.y += self.vy * dt
+        if self.x < 32 or self.x > WIDTH - 32:
+            self.x = clamp(self.x, 32, WIDTH - 32)
+            self.vx *= -1
+        if self.y < 55 or self.y > HEIGHT - 45:
+            self.y = clamp(self.y, 55, HEIGHT - 45)
+            self.vy *= -1
+
+        self.throw_timer -= dt
+        if self.throw_timer <= 0:
+            segment = random.randrange(len(path_points) - 1)
+            start_x, start_y = path_points[segment]
+            end_x, end_y = path_points[segment + 1]
+            progress = random.uniform(0.2, 0.8)
+            target_x = start_x + (end_x - start_x) * progress
+            target_y = start_y + (end_y - start_y) * progress
+            eggs.append(EasterEgg(
+                self.x,
+                self.y,
+                target_x,
+                target_y,
+                segment,
+                hatch_delay=self.hatch_delay,
+            ))
+            self.throw_timer = self.egg_interval
+
+    def draw(self, surface):
+        x, y = round(self.x), round(self.y)
+        hop = round(abs(math.sin(self.run_time * 9)) * 4)
+        pygame.draw.ellipse(surface, (35, 45, 35), (x - 22, y + 17, 44, 9))
+        pygame.draw.ellipse(surface, (245, 245, 230), (x - 17, y - 2 - hop, 34, 24))
+        pygame.draw.ellipse(surface, (250, 248, 238), (x - 12, y - 20 - hop, 24, 23))
+        pygame.draw.ellipse(surface, (250, 248, 238), (x - 12, y - 42 - hop, 8, 25))
+        pygame.draw.ellipse(surface, (250, 248, 238), (x + 3, y - 43 - hop, 8, 25))
+        pygame.draw.ellipse(surface, (235, 145, 160), (x - 10, y - 40 - hop, 4, 17))
+        pygame.draw.ellipse(surface, (235, 145, 160), (x + 5, y - 41 - hop, 4, 17))
+        pygame.draw.circle(surface, (35, 30, 30), (x - 4, y - 14 - hop), 2)
+        pygame.draw.circle(surface, (35, 30, 30), (x + 5, y - 14 - hop), 2)
+        pygame.draw.circle(surface, (235, 120, 140), (x + 1, y - 8 - hop), 3)
+
+
 class Game:
     def __init__(self, path_points, sandbox=False, map_name=None):
         self.path_points = path_points
@@ -3139,6 +3355,16 @@ class Game:
         )
         self.leprechaun = Leprechaun() if SEASONAL_MAPS.get(self.map_name, {}).get("leprechaun") else None
         self.leprechaun_coin_bursts = []
+        easter_map = SEASONAL_MAPS.get(self.map_name, {})
+        self.easter_bunny = (
+            EasterBunny(
+                egg_interval=easter_map["easter_egg_interval"],
+                hatch_delay=easter_map["easter_egg_hatch_delay"],
+            )
+            if "easter_egg_interval" in easter_map
+            else None
+        )
+        self.easter_eggs = []
         pi_day_drop_interval = SEASONAL_MAPS.get(self.map_name, {}).get("pi_day_drop_interval")
         self.pi_day_fish = (
             [PiDayFish(index, pi_day_drop_interval) for index in range(4)]
@@ -3148,6 +3374,8 @@ class Game:
         boom_boom_interval = SEASONAL_MAPS.get(self.map_name, {}).get("boom_boom_firework_interval")
         self.boom_boom_timer = boom_boom_interval or 0.0
         self.boom_boom_fireworks = []
+        independence_interval = SEASONAL_MAPS.get(self.map_name, {}).get("independence_shooter_interval")
+        self.independence_shooter_timer = independence_interval or 0.0
         self.paint_dash = PaintDashShooter() if SEASONAL_MAPS.get(self.map_name, {}).get("paint_dash") else None
         self.pumpkin_spotlights = (
             PumpkinSpotlights()
@@ -4034,6 +4262,27 @@ class Game:
         cake.falling = True
         self.enemies.append(cake)
 
+    def update_easter_bunny(self, dt):
+        if self.easter_bunny is None:
+            return
+
+        self.easter_bunny.update(dt, self.easter_eggs, self.path_points)
+        for egg in list(self.easter_eggs):
+            if not egg.update(dt):
+                continue
+            wave = WAVES[min(self.wave_index, len(WAVES) - 1)]
+            monster = Enemy(
+                self.path_points,
+                speed=wave["speed"],
+                hp=wave["hp"],
+                reward=wave["reward"] + 10,
+                enemy_type="chocolate",
+            )
+            monster.segment = egg.segment
+            monster.x, monster.y = egg.target_x, egg.target_y
+            self.enemies.append(monster)
+            self.easter_eggs.remove(egg)
+
     def random_pi_day_enemy_type(self):
         available_types = ["ground"]
         if self.wave_index >= 1:
@@ -4173,6 +4422,38 @@ class Game:
             if not firework.active:
                 self.boom_boom_fireworks.remove(firework)
 
+    def update_independence_shooters(self, dt):
+        seasonal_map = SEASONAL_MAPS.get(self.map_name, {})
+        interval = seasonal_map.get("independence_shooter_interval")
+        if interval is None or self.enemies_paused:
+            return
+
+        duration = seasonal_map["independence_shooter_duration"]
+        for enemy in list(self.enemies):
+            if enemy.independence_ally_timer <= 0:
+                continue
+            enemy.independence_ally_timer = max(0.0, enemy.independence_ally_timer - dt)
+            if enemy.independence_ally_timer == 0:
+                self.enemies.remove(enemy)
+
+        self.independence_shooter_timer -= dt
+        if self.independence_shooter_timer > 0:
+            return
+
+        shooters = [
+            enemy for enemy in self.enemies
+            if enemy.type == "shooter"
+            and enemy.independence_ally_timer <= 0
+            and not enemy.is_dead()
+            and not enemy.reached_goal()
+        ]
+        if shooters:
+            shooter = random.choice(shooters)
+            shooter.independence_ally_timer = duration
+            shooter.projectiles.clear()
+            shooter.time_since_shot = 0.0
+        self.independence_shooter_timer = interval
+
     def spawn_earth_enemy(self):
         if not SEASONAL_MAPS.get(self.map_name, {}).get("earth_spawn_interval"):
             return
@@ -4310,6 +4591,8 @@ class Game:
 
         self.update_homework_effect(dt)
         self.update_boom_boom_fireworks(dt)
+        self.update_independence_shooters(dt)
+        self.update_easter_bunny(dt)
         if self.diwali_lamps:
             for tower in self.towers:
                 if tower.burning_timer > 0:
@@ -4328,7 +4611,7 @@ class Game:
 
         if not self.enemies_paused:
             for enemy in list(self.enemies):
-                enemy.update(dt, self.towers)
+                enemy.update(dt, self.towers, self.enemies)
                 if enemy.dodged_tower:
                     enemy.dodged_tower = False
                     if not self.sandbox:
@@ -4760,6 +5043,11 @@ class Game:
             coin_burst.draw(surface)
         if self.leprechaun is not None:
             self.leprechaun.draw(surface)
+
+        for egg in self.easter_eggs:
+            egg.draw(surface)
+        if self.easter_bunny is not None:
+            self.easter_bunny.draw(surface)
 
         for fish in self.pi_day_fish:
             fish.draw(surface)
@@ -5314,6 +5602,20 @@ def draw_bestiary_window(surface, scroll_offset=0):
             ):
                 pygame.draw.line(surface, candle_color, (candle_x, center_y - 17), (candle_x, center_y - 23), 2)
                 pygame.draw.circle(surface, (255, 220, 90), (candle_x, center_y - 25), 2)
+        elif enemy_id == "chocolate":
+            pygame.draw.polygon(surface, (83, 43, 35), [
+                (center_x - 15, center_y - 8),
+                (center_x - 9, center_y - 17),
+                (center_x, center_y - 12),
+                (center_x + 9, center_y - 17),
+                (center_x + 15, center_y - 6),
+                (center_x + 12, center_y + 11),
+                (center_x, center_y + 18),
+                (center_x - 12, center_y + 11),
+            ])
+            pygame.draw.circle(surface, (133, 72, 48), (center_x, center_y), 12)
+            pygame.draw.circle(surface, (205, 143, 88), (center_x - 5, center_y - 5), 3)
+            pygame.draw.circle(surface, (205, 143, 88), (center_x + 5, center_y + 5), 3)
         elif enemy_id == "earth":
             pygame.draw.ellipse(surface, (67, 45, 28), (center_x - 17, center_y - 1, 34, 22))
             pygame.draw.ellipse(surface, (112, 78, 42), (center_x - 14, center_y - 5, 28, 17))
@@ -5333,6 +5635,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "medic": (255, 255, 220),
             "present": (255, 245, 180),
             "cake": (255, 255, 235),
+            "chocolate": (255, 230, 160),
             "earth": (245, 235, 190),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
