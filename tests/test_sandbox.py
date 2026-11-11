@@ -1257,6 +1257,28 @@ class SandboxModeTest(unittest.TestCase):
             with self.subTest(enemy_id=enemy_id):
                 self.assertEqual(surface.get_at((55, 123 + index * 90))[:3], (35, 25, 25))
 
+    def test_bestiary_pi_and_pie_have_their_own_portraits(self):
+        surface = pygame.Surface((600, 123 + len(main.BESTIARY) * 90))
+        main.draw_bestiary_window(surface)
+
+        def count_color_in_portrait(enemy_id, color):
+            index = list(main.BESTIARY).index(enemy_id)
+            center_x = 60
+            center_y = 92 + index * 90 + 34
+            return sum(
+                surface.get_at((x, y))[:3] == color
+                for x in range(center_x - 20, center_x + 21)
+                for y in range(center_y - 20, center_y + 21)
+            )
+
+        self.assertGreater(count_color_in_portrait("pi", (255, 242, 211)), 20)
+        self.assertGreater(count_color_in_portrait("pie", (170, 75, 45)), 20)
+        pie_index = list(main.BESTIARY).index("pie")
+        pie_center_x = 60
+        pie_center_y = 92 + pie_index * 90 + 34
+        self.assertEqual(surface.get_at((pie_center_x - 15, pie_center_y))[:3], (190, 105, 48))
+        self.assertEqual(surface.get_at((pie_center_x - 9, pie_center_y))[:3], (245, 195, 115))
+
     def test_ghost_enemy_appears_in_wave_seven_and_turns_invisible(self):
         game = Game(MAPS["Classic"])
         game.wave_index = 6
@@ -1386,6 +1408,59 @@ class SandboxModeTest(unittest.TestCase):
                 save_unlocks({"basic"}, win_coins, unlocked_maps)
                 self.assertIn("Spiral", load_unlocked_maps())
                 self.assertEqual(main.load_progress()[1], 5)
+            finally:
+                main.SAVE_FILE = original_save_file
+        finally:
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
+    def test_roundabout_is_a_buyable_regular_map_for_30_win_coins(self):
+        self.assertIn("Roundabout", MAPS)
+        game = Game(MAPS["Roundabout"], map_name="Roundabout")
+        self.assertEqual(game.path_points, MAPS["Roundabout"])
+        self.assertNotEqual(game.background_color, main.MAP_BACKGROUNDS["Classic"])
+        self.assertEqual(main.MAP_UNLOCK_COSTS["Roundabout"], 30)
+
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        game.draw(surface)
+        self.assertEqual(surface.get_at((420, 350))[:3], (67, 129, 75))
+        self.assertEqual(surface.get_at((150, 320))[:3], (75, 79, 83))
+
+        main.draw_map_selection(
+            surface,
+            "Classic",
+            False,
+            {"Classic", "Loop", "Cross"},
+            30,
+            set(),
+            "classic",
+        )
+        self.assertEqual(
+            surface.get_at((main.ROUNDABOUT_BUY_RECT.x + 5, main.ROUNDABOUT_BUY_RECT.y + 5))[:3],
+            (80, 150, 95),
+        )
+
+        unlocked_maps = {"Classic", "Loop", "Cross"}
+        remaining_coins, purchased = main.purchase_map("Roundabout", 29, unlocked_maps)
+        self.assertFalse(purchased)
+        self.assertEqual(remaining_coins, 29)
+        self.assertNotIn("Roundabout", unlocked_maps)
+        remaining_coins, purchased = main.purchase_map("Roundabout", 45, unlocked_maps)
+        self.assertTrue(purchased)
+        self.assertEqual(remaining_coins, 15)
+        self.assertIn("Roundabout", unlocked_maps)
+        self.assertEqual(main.purchase_map("Roundabout", remaining_coins, unlocked_maps), (15, False))
+
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": remaining_coins}, save_file)
+            save_path = save_file.name
+        try:
+            original_save_file = main.SAVE_FILE
+            main.SAVE_FILE = save_path
+            try:
+                save_unlocks({"basic"}, remaining_coins, unlocked_maps)
+                self.assertIn("Roundabout", load_unlocked_maps())
+                self.assertEqual(main.load_progress()[1], 15)
             finally:
                 main.SAVE_FILE = original_save_file
         finally:
@@ -2258,6 +2333,35 @@ class SandboxModeTest(unittest.TestCase):
         game.developer_spawn_enemy()
         self.assertEqual(len(game.enemies), 2)
         self.assertEqual(game.enemies[-1].type, "flyer")
+
+    def test_developer_controls_window_draws_controls_and_routes_actions(self):
+        surface = pygame.Surface(main.DEVELOPER_CONTROLS_SIZE)
+        buttons = main.draw_developer_controls(surface, "ghost", True)
+        self.assertEqual(
+            set(buttons),
+            {
+                "ground", "flyer", "shooter", "lightning", "shielder", "ghost", "medic",
+                "spawn", "toggle_pause", "move_up", "move_left", "move_down", "move_right",
+            },
+        )
+        self.assertTrue(buttons["ghost"].collidepoint(buttons["ghost"].center))
+        self.assertTrue(buttons["spawn"].collidepoint(buttons["spawn"].center))
+
+        game = Game(MAPS["Classic"])
+        game.developer_mode = True
+        self.assertTrue(main.apply_developer_control_command(
+            game, {"action": "select_enemy", "enemy_type": "ghost"}
+        ))
+        self.assertTrue(main.apply_developer_control_command(game, {"action": "spawn"}))
+        self.assertEqual(game.enemies[-1].type, "ghost")
+
+        enemy = game.enemies[-1]
+        start_y = enemy.y
+        main.apply_developer_control_command(game, {"action": "move", "direction": "up"})
+        self.assertEqual(enemy.y, start_y - 20)
+        main.apply_developer_control_command(game, {"action": "toggle_pause"})
+        self.assertTrue(game.enemies_paused)
+        self.assertFalse(main.apply_developer_control_command(game, {"action": "close"}))
 
     def test_developer_mode_can_drag_one_enemy(self):
         game = Game(MAPS["Classic"])

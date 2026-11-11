@@ -1,6 +1,7 @@
 import calendar
 import json
 import math
+import multiprocessing
 import os
 import random
 import subprocess
@@ -189,6 +190,7 @@ TOWER_DIRECTORY_SHORTCUTS = (
 
 SAVE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "savegame.json")
 MAP_UNLOCK_COST = 20
+MAP_UNLOCK_COSTS = {"Spiral": MAP_UNLOCK_COST, "Roundabout": 30}
 STICKMAN_COSTUMES = {
     "classic": {"name": "Classic", "price": 0, "body": (35, 35, 48), "accent": (255, 220, 90), "shirt": (205, 65, 65), "hat": (255, 240, 180)},
 }
@@ -723,6 +725,20 @@ MAPS = {
         (280, 320),
         (840, 320),
     ],
+    "Roundabout": [
+        (0, 320),
+        (290, 320),
+        (302, 278),
+        (325, 242),
+        (360, 218),
+        (400, 207),
+        (440, 207),
+        (480, 218),
+        (515, 242),
+        (538, 278),
+        (550, 320),
+        (840, 320),
+    ],
 }
 
 SEASONAL_MAPS = {
@@ -860,11 +876,17 @@ MAP_BACKGROUNDS = {
     "Loop": (18, 30, 24),
     "Cross": (28, 22, 38),
     "Spiral": (40, 90, 55),
+    "Roundabout": (47, 91, 56),
 }
 
 DEFAULT_MAP = "Classic"
 FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
+ROUNDABOUT_BUY_RECT = pygame.Rect(320, 225, 90, 26)
+MAP_BUY_RECTS = {
+    "Spiral": SPIRAL_BUY_RECT,
+    "Roundabout": ROUNDABOUT_BUY_RECT,
+}
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
 BACKSTORY_SCENE_DURATION = 4.5
 BACKSTORY_SCENE_COUNT = 4
@@ -1327,6 +1349,14 @@ def load_unlocked_maps():
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         pass
     return set(FREE_MAPS)
+
+
+def purchase_map(map_name, win_coins, unlocked_maps):
+    cost = MAP_UNLOCK_COSTS.get(map_name, MAP_UNLOCK_COST)
+    if map_name not in MAPS or map_name in unlocked_maps or win_coins < cost:
+        return win_coins, False
+    unlocked_maps.add(map_name)
+    return win_coins - cost, True
 
 
 def load_highest_cleared_wave():
@@ -3478,7 +3508,6 @@ class Game:
         self.dragged_enemy = None
         self.drag_offset = (0, 0)
         self.developer_spawn_type = "ground"
-        self.developer_spawn_rects = {}
         self.developer_stickman_active = False
         self.developer_stickman_x = WIDTH / 2
         self.developer_stickman_y = HEIGHT / 2
@@ -4887,10 +4916,14 @@ class Game:
         return math.hypot(px - proj_x, py - proj_y)
 
     def draw_path(self, surface):
+        road_color = (75, 79, 83) if self.map_name == "Roundabout" else (180, 140, 80)
+        arrow_color = (235, 238, 230) if self.map_name == "Roundabout" else (90, 65, 40)
+        arrow_highlight = (255, 255, 245) if self.map_name == "Roundabout" else (245, 210, 125)
         for i in range(len(self.path_points) - 1):
             start_x, start_y = self.path_points[i]
             end_x, end_y = self.path_points[i + 1]
-            pygame.draw.line(surface, (180, 140, 80), (start_x, start_y), (end_x, end_y), PATH_WIDTH)
+            path_width = 44 if self.map_name == "Roundabout" else PATH_WIDTH
+            pygame.draw.line(surface, road_color, (start_x, start_y), (end_x, end_y), path_width)
 
             dx = end_x - start_x
             dy = end_y - start_y
@@ -4913,7 +4946,7 @@ class Game:
                     center_x - direction_x * 8 - perpendicular_x * 8,
                     center_y - direction_y * 8 - perpendicular_y * 8,
                 )
-                pygame.draw.polygon(surface, (90, 65, 40), [tip, left, right])
+                pygame.draw.polygon(surface, arrow_color, [tip, left, right])
                 inner_tip = (center_x + direction_x * 9, center_y + direction_y * 9)
                 inner_left = (
                     center_x - direction_x * 6 + perpendicular_x * 5,
@@ -4923,7 +4956,32 @@ class Game:
                     center_x - direction_x * 6 - perpendicular_x * 5,
                     center_y - direction_y * 6 - perpendicular_y * 5,
                 )
-                pygame.draw.polygon(surface, (245, 210, 125), [inner_tip, inner_left, inner_right])
+                pygame.draw.polygon(surface, arrow_highlight, [inner_tip, inner_left, inner_right])
+
+    def draw_roundabout_base(self, surface):
+        center = (420, 320)
+        pygame.draw.circle(surface, (45, 49, 51), center, 132)
+        pygame.draw.circle(surface, (75, 79, 83), center, 127)
+        for start_angle in range(0, 360, 45):
+            pygame.draw.arc(
+                surface,
+                (205, 207, 198),
+                (center[0] - 124, center[1] - 124, 248, 248),
+                math.radians(start_angle + 4),
+                math.radians(start_angle + 29),
+                2,
+            )
+        pygame.draw.line(surface, (45, 49, 51), (0, center[1]), (center[0] - 126, center[1]), 52)
+        pygame.draw.line(surface, (75, 79, 83), (0, center[1]), (center[0] - 126, center[1]), 44)
+        pygame.draw.line(surface, (45, 49, 51), (center[0] + 126, center[1]), (WIDTH, center[1]), 52)
+        pygame.draw.line(surface, (75, 79, 83), (center[0] + 126, center[1]), (WIDTH, center[1]), 44)
+
+        pygame.draw.circle(surface, (165, 169, 159), center, 78)
+        pygame.draw.circle(surface, (67, 129, 75), center, 70)
+        pygame.draw.circle(surface, (80, 145, 83), (center[0] - 20, center[1] - 14), 13)
+        pygame.draw.circle(surface, (80, 145, 83), (center[0] + 18, center[1] + 17), 11)
+        pygame.draw.rect(surface, (102, 75, 47), (center[0] - 3, center[1] - 8, 6, 25))
+        pygame.draw.circle(surface, (49, 105, 57), (center[0], center[1] - 11), 18)
 
     def draw_grid(self, surface):
         if self.map_name == "Spiral" or SEASONAL_MAPS.get(self.map_name, {}).get("no_grid", False):
@@ -5062,22 +5120,12 @@ class Game:
         pygame.draw.rect(surface, outline_color, (grid_x - 20, grid_y - 20, GRID_SIZE, GRID_SIZE), 2)
         return valid
 
-    def handle_developer_spawn_click(self, mouse_pos):
-        if not self.developer_mode:
-            return False
-        for key, rect in self.developer_spawn_rects.items():
-            if rect.collidepoint(mouse_pos):
-                if key == "spawn":
-                    self.developer_spawn_enemy()
-                else:
-                    self.set_developer_spawn_type(key)
-                return True
-        return False
-
     def draw(self, surface):
         surface.fill(self.background_color)
         self.draw_grid(surface)
         self.draw_paint_dash_decorations(surface)
+        if self.map_name == "Roundabout":
+            self.draw_roundabout_base(surface)
         self.draw_path(surface)
         if self.map_name == "Spiral":
             self.draw_grass_texture(surface)
@@ -5157,33 +5205,11 @@ class Game:
             f"Selected: {selected_label}",
             "Tower directory: press T",
             "Sandbox mode" if self.sandbox else "Basic unlocked. New towers unlock by wave.",
-            "Enemies paused (Space to resume)" if self.enemies_paused else "Enemies running (Space to pause)" if self.developer_mode else "",
-            "Arrow keys move enemies" if self.developer_mode else "",
-            "Drag enemies with mouse" if self.developer_mode else "",
-            "Click dev buttons to spawn" if self.developer_mode else "",
             "Click tower to upgrade (+$80)",
         ]
         if self.developer_mode:
             developer_text = FONT.render("DEVELOPER MODE", True, (255, 220, 110))
             surface.blit(developer_text, (20, 12))
-            spawn_button_y = 36
-            self.developer_spawn_rects = {}
-            enemy_types = [("ground", "Ground"), ("flyer", "Flyer"), ("shooter", "Shooter"), ("lightning", "Lightning"), ("shielder", "Shielder"), ("ghost", "Ghost"), ("medic", "Medic")]
-            for index, (enemy_type, label) in enumerate(enemy_types):
-                rect = pygame.Rect(20 + index * 110, spawn_button_y, 100, 28)
-                self.developer_spawn_rects[enemy_type] = rect
-                color = (110, 170, 90) if self.developer_spawn_type == enemy_type else (70, 80, 95)
-                pygame.draw.rect(surface, color, rect, border_radius=6)
-                pygame.draw.rect(surface, (180, 220, 200), rect, 2, border_radius=6)
-                button_text = FONT.render(label, True, (255, 255, 255))
-                surface.blit(button_text, (rect.x + 12, rect.y + 6))
-
-            spawn_rect = pygame.Rect(20, spawn_button_y + 36, 150, 30)
-            self.developer_spawn_rects["spawn"] = spawn_rect
-            pygame.draw.rect(surface, (140, 90, 60), spawn_rect, border_radius=6)
-            pygame.draw.rect(surface, (250, 200, 180), spawn_rect, 2, border_radius=6)
-            spawn_text = FONT.render(f"Spawn {self.developer_spawn_type.title()}", True, (255, 255, 255))
-            surface.blit(spawn_text, (spawn_rect.x + 10, spawn_rect.y + 6))
         for i, line in enumerate(status):
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
@@ -5693,6 +5719,27 @@ def draw_bestiary_window(surface, scroll_offset=0):
             pygame.draw.ellipse(surface, (112, 78, 42), (center_x - 14, center_y - 5, 28, 17))
             pygame.draw.circle(surface, (137, 101, 55), (center_x - 7, center_y - 2), 4)
             pygame.draw.circle(surface, (137, 101, 55), (center_x + 7, center_y - 2), 4)
+        elif enemy_id == "pi":
+            pygame.draw.circle(surface, (82, 54, 132), (center_x, center_y), 19)
+            pygame.draw.circle(surface, (175, 143, 225), (center_x, center_y), 19, 2)
+            pygame.draw.rect(surface, (255, 242, 211), (center_x - 14, center_y - 10, 28, 5), border_radius=2)
+            pygame.draw.rect(surface, (255, 242, 211), (center_x - 10, center_y - 6, 5, 19), border_radius=2)
+            pygame.draw.rect(surface, (255, 242, 211), (center_x + 5, center_y - 6, 5, 19), border_radius=2)
+        elif enemy_id == "pie":
+            pygame.draw.circle(surface, (190, 105, 48), (center_x, center_y), 15)
+            pygame.draw.circle(surface, (245, 195, 115), (center_x, center_y), 12)
+            pygame.draw.polygon(surface, (170, 75, 45), [
+                (center_x - 12, center_y - 8),
+                (center_x + 14, center_y - 3),
+                (center_x + 1, center_y + 13),
+            ])
+            pygame.draw.polygon(surface, (240, 175, 95), [
+                (center_x - 8, center_y - 5),
+                (center_x + 9, center_y - 2),
+                (center_x + 1, center_y + 8),
+            ])
+            pygame.draw.line(surface, (255, 225, 160), (center_x - 5, center_y - 4), (center_x + 5, center_y - 2), 2)
+            pygame.draw.line(surface, (255, 225, 160), (center_x - 1, center_y - 1), (center_x + 4, center_y + 4), 2)
         else:
             pygame.draw.polygon(surface, (220, 220, 80), [(center_x - 12, center_y - 8), (center_x - 2, center_y - 10), (center_x - 7, center_y - 22), (center_x + 12, center_y - 9), (center_x + 3, center_y - 7), (center_x + 9, center_y + 10), (center_x - 5, center_y + 8), (center_x - 1, center_y + 18), (center_x - 12, center_y + 6)])
             pygame.draw.circle(surface, (255, 245, 120), (center_x, center_y), 11)
@@ -5709,6 +5756,8 @@ def draw_bestiary_window(surface, scroll_offset=0):
             "cake": (255, 255, 235),
             "chocolate": (255, 230, 160),
             "earth": (245, 235, 190),
+            "pi": (255, 255, 230),
+            "pie": (255, 255, 225),
         }
         face_color = face_colors.get(enemy_id, (255, 235, 120))
         pygame.draw.circle(surface, face_color, (center_x - 5, center_y - 3), 3)
@@ -6247,23 +6296,25 @@ def draw_map_selection(
         if map_name in unlocked_maps:
             map_label = map_name
         else:
-            map_label = f"{map_name} ({MAP_UNLOCK_COST} win coins)"
+            map_cost = MAP_UNLOCK_COSTS.get(map_name, MAP_UNLOCK_COST)
+            map_label = f"{map_name} ({map_cost} win coins)"
         label = FONT.render(f"{prefix}{index}. {map_label}", True, (220, 220, 220))
         surface.blit(label, (60, 80 + index * 30))
-        if map_name == "Spiral" and map_name not in unlocked_maps:
-            pygame.draw.rect(surface, (80, 150, 95), SPIRAL_BUY_RECT, border_radius=5)
-            pygame.draw.rect(surface, (160, 230, 170), SPIRAL_BUY_RECT, 2, border_radius=5)
+        buy_rect = MAP_BUY_RECTS.get(map_name)
+        if buy_rect is not None and map_name not in unlocked_maps:
+            pygame.draw.rect(surface, (80, 150, 95), buy_rect, border_radius=5)
+            pygame.draw.rect(surface, (160, 230, 170), buy_rect, 2, border_radius=5)
             buy_text = FONT.render("BUY", True, (255, 255, 255))
             surface.blit(
                 buy_text,
                 (
-                    SPIRAL_BUY_RECT.x + (SPIRAL_BUY_RECT.width - buy_text.get_width()) // 2,
-                    SPIRAL_BUY_RECT.y + (SPIRAL_BUY_RECT.height - buy_text.get_height()) // 2,
+                    buy_rect.x + (buy_rect.width - buy_text.get_width()) // 2,
+                    buy_rect.y + (buy_rect.height - buy_text.get_height()) // 2,
                 ),
             )
 
     sandbox_text = FONT.render(f"Sandbox mode: {'ON' if sandbox_mode else 'OFF'} (Press S)", True, (180, 255, 180) if sandbox_mode else (220, 220, 220))
-    surface.blit(sandbox_text, (40, 230))
+    surface.blit(sandbox_text, (40, 260))
 
     unlock_title = FONT.render("Tower unlocks:", True, (255, 255, 255))
     surface.blit(unlock_title, (440, 40))
@@ -6433,12 +6484,12 @@ def draw_map_selection(
                 surface.blit(object_label, (object_rect.x + 6, object_rect.y + 3))
 
     if not costume_window_open:
-        info = FONT.render("Press Enter to start. Use keys 1-4 to choose a map.", True, (180, 180, 180))
-        surface.blit(info, (40, 270))
+        info = FONT.render("Press Enter to start. Click an unlocked map to select.", True, (180, 180, 180))
+        surface.blit(info, (40, 300))
         note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
-        surface.blit(note, (40, 310))
+        surface.blit(note, (40, 330))
         coins = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
-        surface.blit(coins, (40, 350))
+        surface.blit(coins, (40, 360))
 
         pygame.draw.rect(surface, (85, 105, 145), BACKSTORY_RECT, border_radius=7)
         pygame.draw.rect(surface, (180, 205, 245), BACKSTORY_RECT, 2, border_radius=7)
@@ -6598,6 +6649,174 @@ def draw_backstory(surface, elapsed=0.0):
     return scene_index
 
 
+DEVELOPER_CONTROL_ENEMIES = (
+    ("ground", "Ground"),
+    ("flyer", "Flyer"),
+    ("shooter", "Shooter"),
+    ("lightning", "Lightning"),
+    ("shielder", "Shielder"),
+    ("ghost", "Ghost"),
+    ("medic", "Medic"),
+)
+DEVELOPER_CONTROLS_SIZE = (460, 555)
+
+
+def draw_developer_controls(surface, selected_enemy_type="ground", enemies_paused=False):
+    surface.fill((20, 27, 40))
+    title = BACKSTORY_TITLE_FONT.render("Developer Controls", True, (255, 220, 110))
+    surface.blit(title, (20, 16))
+    subtitle = FONT.render("Select an enemy to spawn into the running game.", True, (190, 205, 220))
+    surface.blit(subtitle, (20, 56))
+
+    buttons = {}
+    for index, (enemy_type, label) in enumerate(DEVELOPER_CONTROL_ENEMIES):
+        column = index % 2
+        row = index // 2
+        rect = pygame.Rect(20 + column * 210, 92 + row * 42, 195, 34)
+        buttons[enemy_type] = rect
+        fill = (110, 150, 88) if enemy_type == selected_enemy_type else (62, 76, 96)
+        pygame.draw.rect(surface, fill, rect, border_radius=6)
+        pygame.draw.rect(surface, (180, 205, 220), rect, 1, border_radius=6)
+        label_surface = FONT.render(label, True, (255, 255, 255))
+        surface.blit(label_surface, label_surface.get_rect(center=rect.center))
+
+    buttons["spawn"] = pygame.Rect(20, 260, 420, 42)
+    pygame.draw.rect(surface, (140, 90, 60), buttons["spawn"], border_radius=6)
+    pygame.draw.rect(surface, (250, 200, 180), buttons["spawn"], 2, border_radius=6)
+    spawn_label = FONT.render(f"Spawn {selected_enemy_type.title()}", True, (255, 255, 255))
+    surface.blit(spawn_label, spawn_label.get_rect(center=buttons["spawn"].center))
+
+    buttons["toggle_pause"] = pygame.Rect(20, 314, 420, 38)
+    pause_color = (130, 75, 65) if not enemies_paused else (75, 125, 85)
+    pygame.draw.rect(surface, pause_color, buttons["toggle_pause"], border_radius=6)
+    pygame.draw.rect(surface, (225, 210, 195), buttons["toggle_pause"], 1, border_radius=6)
+    pause_label = "Resume enemies" if enemies_paused else "Pause enemies"
+    pause_surface = FONT.render(pause_label, True, (255, 255, 255))
+    surface.blit(pause_surface, pause_surface.get_rect(center=buttons["toggle_pause"].center))
+
+    buttons["move_up"] = pygame.Rect(198, 378, 64, 34)
+    buttons["move_left"] = pygame.Rect(128, 418, 64, 34)
+    buttons["move_down"] = pygame.Rect(198, 418, 64, 34)
+    buttons["move_right"] = pygame.Rect(268, 418, 64, 34)
+    for action, label in (
+        ("move_up", "Up"),
+        ("move_left", "Left"),
+        ("move_down", "Down"),
+        ("move_right", "Right"),
+    ):
+        rect = buttons[action]
+        pygame.draw.rect(surface, (62, 76, 96), rect, border_radius=5)
+        pygame.draw.rect(surface, (180, 205, 220), rect, 1, border_radius=5)
+        text = FONT.render(label, True, (255, 255, 255))
+        surface.blit(text, text.get_rect(center=rect.center))
+    move_hint = FONT.render("Move all living enemies", True, (190, 205, 220))
+    surface.blit(move_hint, move_hint.get_rect(center=(230, 465)))
+    drag_hint = FONT.render("You can also drag enemies in the game window.", True, (190, 205, 220))
+    surface.blit(drag_hint, drag_hint.get_rect(center=(230, 520)))
+    return buttons
+
+
+def apply_developer_control_command(game, command):
+    if not game or not game.developer_mode or not isinstance(command, dict):
+        return command.get("action") != "close" if isinstance(command, dict) else True
+    action = command.get("action")
+    if action == "close":
+        return False
+    if action == "select_enemy":
+        game.set_developer_spawn_type(command.get("enemy_type"))
+    elif action == "spawn":
+        game.developer_spawn_enemy()
+    elif action == "toggle_pause":
+        game.toggle_enemy_pause()
+    elif action == "move":
+        movement = {
+            "up": (0, -20),
+            "left": (-20, 0),
+            "down": (0, 20),
+            "right": (20, 0),
+        }.get(command.get("direction"))
+        if movement is not None:
+            game.move_enemies(*movement)
+    return True
+
+
+def run_developer_controls_window(connection):
+    pygame.display.set_mode(DEVELOPER_CONTROLS_SIZE)
+    pygame.display.set_caption("Tower Defense - Developer Controls")
+    clock = pygame.time.Clock()
+    selected_enemy_type = "ground"
+    enemies_paused = False
+    running = True
+    while running:
+        clock.tick(30)
+        while connection.poll():
+            state = connection.recv()
+            if state is None:
+                running = False
+                break
+            if state.get("type") == "state":
+                selected_enemy_type = state["selected_enemy_type"]
+                enemies_paused = state["enemies_paused"]
+
+        buttons = draw_developer_controls(
+            pygame.display.get_surface(),
+            selected_enemy_type,
+            enemies_paused,
+        )
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                connection.send({"action": "close"})
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                for enemy_type, _ in DEVELOPER_CONTROL_ENEMIES:
+                    if buttons[enemy_type].collidepoint(event.pos):
+                        connection.send({"action": "select_enemy", "enemy_type": enemy_type})
+                        selected_enemy_type = enemy_type
+                        break
+                else:
+                    if buttons["spawn"].collidepoint(event.pos):
+                        connection.send({"action": "spawn"})
+                    elif buttons["toggle_pause"].collidepoint(event.pos):
+                        connection.send({"action": "toggle_pause"})
+                    else:
+                        for direction in ("up", "left", "down", "right"):
+                            if buttons[f"move_{direction}"].collidepoint(event.pos):
+                                connection.send({"action": "move", "direction": direction})
+                                break
+        pygame.display.flip()
+    connection.close()
+    pygame.quit()
+
+
+def open_developer_controls_window():
+    process_context = multiprocessing.get_context("spawn")
+    parent_connection, child_connection = process_context.Pipe()
+    process = process_context.Process(
+        target=run_developer_controls_window,
+        args=(child_connection,),
+        name="tower-defense-developer-controls",
+        daemon=True,
+    )
+    process.start()
+    child_connection.close()
+    return process, parent_connection
+
+
+def close_developer_controls_window(process, connection):
+    if process is not None and process.is_alive():
+        if connection is not None:
+            try:
+                connection.send(None)
+                process.join(timeout=1)
+            except (BrokenPipeError, EOFError, OSError):
+                pass
+        if process.is_alive():
+            process.terminate()
+            process.join()
+    if connection is not None:
+        connection.close()
+
+
 def main():
     check_achievements()
     selected_map = DEFAULT_MAP
@@ -6636,6 +6855,11 @@ def main():
     achievements_process = None
     wiki_process = None
     tower_directory_process = None
+    developer_controls_process = None
+    developer_controls_connection = None
+    developer_controls_game = None
+    developer_controls_dismissed = False
+    developer_controls_last_state = None
     achievement_check_timer = 0.0
     achievement_animation_time = 0.0
 
@@ -7081,15 +7305,34 @@ def main():
                             wiki_process = open_wiki_window()
                     elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
                         show_costume_window = True
-                    elif SPIRAL_BUY_RECT.collidepoint(event.pos) and "Spiral" not in unlocked_maps:
-                        if menu_win_coins >= MAP_UNLOCK_COST:
-                            menu_win_coins -= MAP_UNLOCK_COST
-                            unlocked_maps.add("Spiral")
-                            selected_map = "Spiral"
-                            if not sandbox_mode:
-                                achievements = load_achievements()
-                                award_achievement(achievements, "spiral_map")
-                                save_unlocks(load_unlocks(), menu_win_coins, unlocked_maps, achievements=achievements)
+                    elif any(
+                        map_name not in unlocked_maps and rect.collidepoint(event.pos)
+                        for map_name, rect in MAP_BUY_RECTS.items()
+                    ):
+                        for map_name, rect in MAP_BUY_RECTS.items():
+                            if rect.collidepoint(event.pos):
+                                menu_win_coins, purchased = purchase_map(
+                                    map_name, menu_win_coins, unlocked_maps
+                                )
+                                if purchased:
+                                    selected_map = map_name
+                                    if not sandbox_mode:
+                                        achievements = load_achievements()
+                                        if map_name == "Spiral":
+                                            award_achievement(achievements, "spiral_map")
+                                        save_unlocks(
+                                            load_unlocks(),
+                                            menu_win_coins,
+                                            unlocked_maps,
+                                            achievements=achievements,
+                                        )
+                                break
+                    elif not show_costume_window:
+                        for map_index, map_name in enumerate(MAPS, start=1):
+                            map_row = pygame.Rect(40, 80 + map_index * 30, 350, 26)
+                            if map_row.collidepoint(event.pos) and map_name in unlocked_maps:
+                                selected_map = map_name
+                                break
                 elif WIKI_GAME_BUTTON_RECT.collidepoint(event.pos):
                     if wiki_process is None or wiki_process.poll() is not None:
                         wiki_process = open_wiki_window()
@@ -7099,9 +7342,7 @@ def main():
                     show_backstory = False
                     show_costume_window = False
                 elif not game.game_over:
-                    if game.developer_mode and game.handle_developer_spawn_click(event.pos):
-                        pass
-                    elif game.begin_enemy_drag(event.pos):
+                    if game.begin_enemy_drag(event.pos):
                         pass
                     elif game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
                         game.start_next_wave()
@@ -7111,6 +7352,66 @@ def main():
                 game.drag_enemy(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and not in_menu:
                 game.end_enemy_drag()
+
+        if game is not developer_controls_game:
+            close_developer_controls_window(
+                developer_controls_process,
+                developer_controls_connection,
+            )
+            developer_controls_process = None
+            developer_controls_connection = None
+            developer_controls_last_state = None
+            developer_controls_game = game
+            developer_controls_dismissed = False
+
+        if (
+            game is not None
+            and not in_menu
+            and not game.game_over
+            and game.developer_mode
+            and not developer_controls_dismissed
+            and developer_controls_process is None
+        ):
+            developer_controls_process, developer_controls_connection = open_developer_controls_window()
+
+        if developer_controls_process is not None and (
+            game is None or game.game_over or in_menu
+        ):
+            close_developer_controls_window(
+                developer_controls_process,
+                developer_controls_connection,
+            )
+            developer_controls_process = None
+            developer_controls_connection = None
+            developer_controls_last_state = None
+            developer_controls_dismissed = True
+
+        if developer_controls_process is not None:
+            if not developer_controls_process.is_alive():
+                close_developer_controls_window(
+                    developer_controls_process,
+                    developer_controls_connection,
+                )
+                developer_controls_process = None
+                developer_controls_connection = None
+                developer_controls_last_state = None
+                developer_controls_dismissed = True
+            else:
+                controls_open = True
+                while developer_controls_connection.poll():
+                    command = developer_controls_connection.recv()
+                    if not apply_developer_control_command(game, command):
+                        controls_open = False
+                        break
+                if not controls_open:
+                    close_developer_controls_window(
+                        developer_controls_process,
+                        developer_controls_connection,
+                    )
+                    developer_controls_process = None
+                    developer_controls_connection = None
+                    developer_controls_last_state = None
+                    developer_controls_dismissed = True
 
         if in_menu:
             if show_backstory:
@@ -7150,6 +7451,22 @@ def main():
         else:
             if not seasonal_date_panel_open:
                 game.update(dt)
+            if (
+                developer_controls_process is not None
+                and developer_controls_connection is not None
+                and developer_controls_process.is_alive()
+            ):
+                controls_state = (
+                    game.developer_spawn_type,
+                    game.enemies_paused,
+                )
+                if controls_state != developer_controls_last_state:
+                    developer_controls_connection.send({
+                        "type": "state",
+                        "selected_enemy_type": controls_state[0],
+                        "enemies_paused": controls_state[1],
+                    })
+                    developer_controls_last_state = controls_state
             game.draw(SCREEN)
 
         if seasonal_date_panel_open:
@@ -7159,6 +7476,10 @@ def main():
         draw_achievement_popups(SCREEN, achievement_animation_time)
         pygame.display.flip()
 
+    close_developer_controls_window(
+        developer_controls_process,
+        developer_controls_connection,
+    )
     if tower_directory_process is not None and tower_directory_process.poll() is None:
         tower_directory_process.terminate()
     pygame.quit()
