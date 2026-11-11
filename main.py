@@ -26,8 +26,10 @@ WALKER_DAMAGE = 24
 MEDIC_TOUCH_RANGE = 26
 MEDIC_HEAL_RATE = 30
 FONT = pygame.font.SysFont("arial", 18)
+BACKSTORY_TITLE_FONT = pygame.font.SysFont("arial", 34, bold=True)
 PI_FISH_MARKER_FONT = pygame.font.SysFont("arial", 12, bold=True)
 MATRIX_RAIN_FONT = pygame.font.SysFont("monospace", 10, bold=True)
+ALLY_BADGE_FONT = pygame.font.SysFont("arial", 8, bold=True)
 
 TOWER_TYPES = {
     "basic": {
@@ -864,6 +866,15 @@ DEFAULT_MAP = "Classic"
 FREE_MAPS = {"Classic", "Loop", "Cross"}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 BACKSTORY_RECT = pygame.Rect(40, 390, 180, 42)
+BACKSTORY_SCENE_DURATION = 4.5
+BACKSTORY_SCENE_COUNT = 4
+BACKSTORY_DURATION = BACKSTORY_SCENE_DURATION * BACKSTORY_SCENE_COUNT
+BACKSTORY_STORY_LINES = (
+    "Another great war has occured, and the only survivors are",
+    "You and, sick-man stickman?!? Anyway, with the enemies",
+    "marching in, you have to stop them. Or else, they will",
+    "quickly end you. Let's hope sick-man stickman can help!",
+)
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
 SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
@@ -1499,6 +1510,7 @@ class Enemy:
         self.homework_frozen_timer = 0.0
         self.homework_animation_time = 0.0
         self.independence_ally_timer = 0.0
+        self.independence_animation_time = 0.0
 
     def blocks_projectile_path(self, start_x, start_y, end_x, end_y, projectile_radius=5):
         if self.type != "shielder":
@@ -1544,6 +1556,8 @@ class Enemy:
     def update(self, dt, towers, enemies=None):
         if self.finished:
             return
+        if self.independence_ally_timer > 0:
+            self.independence_animation_time += dt
         if self.homework_frozen_timer > 0:
             self.homework_frozen_timer = max(0.0, self.homework_frozen_timer - dt)
             self.homework_animation_time += dt
@@ -1700,6 +1714,20 @@ class Enemy:
     def draw(self, surface):
         center_x, center_y = int(self.x), int(self.y)
         earth_rumbling = self.type == "earth" and self.earth_rumble_timer > 0
+        independence_ally = self.independence_ally_timer > 0
+        if independence_ally:
+            pulse = (math.sin(self.independence_animation_time * 7) + 1) / 2
+            aura_size = 66 + round(pulse * 6)
+            aura = pygame.Surface((aura_size, aura_size), pygame.SRCALPHA)
+            aura_center = (aura_size // 2, aura_size // 2)
+            pygame.draw.circle(
+                aura,
+                (70, 180, 255, 24 + round(pulse * 20)),
+                aura_center,
+                31 + round(pulse * 3),
+            )
+            pygame.draw.circle(aura, (95, 220, 255, 200), aura_center, 28, 2)
+            surface.blit(aura, (center_x - aura_size // 2, center_y - aura_size // 2))
         if self.falling and self.fall_target is not None:
             shadow_x, shadow_y = self.fall_target
             pygame.draw.ellipse(surface, (75, 58, 68), (shadow_x - 17, shadow_y + 7, 34, 8))
@@ -1724,17 +1752,19 @@ class Enemy:
             )
             eye_color = (255, 245, 150)
         elif self.type == "shooter":
-            body_color = (190, 105, 55)
+            body_color = (100, 190, 220) if independence_ally else (190, 105, 55)
+            outline_color = (35, 75, 115) if independence_ally else (105, 55, 35)
             pygame.draw.polygon(
                 surface,
-                (105, 55, 35),
+                outline_color,
                 [(center_x - 14, center_y - 8), (center_x - 8, center_y - 17), (center_x, center_y - 12),
                  (center_x + 8, center_y - 17), (center_x + 14, center_y - 8), (center_x + 11, center_y + 12),
                  (center_x, center_y + 18), (center_x - 11, center_y + 12)],
             )
             pygame.draw.circle(surface, body_color, (center_x, center_y), 12)
-            pygame.draw.line(surface, (70, 35, 25), (center_x + 8, center_y + 5), (center_x + 22, center_y + 1), 5)
-            eye_color = (255, 220, 100)
+            gun_color = (205, 240, 255) if independence_ally else (70, 35, 25)
+            pygame.draw.line(surface, gun_color, (center_x + 8, center_y + 5), (center_x + 22, center_y + 1), 5)
+            eye_color = (225, 250, 255) if independence_ally else (255, 220, 100)
         elif self.type == "lightning":
             pygame.draw.polygon(
                 surface,
@@ -1942,8 +1972,20 @@ class Enemy:
                 3,
             )
             pygame.draw.circle(surface, (55, 45, 35), (center_x + 5, center_y - 4 - pencil_lift), 2)
-        if self.independence_ally_timer > 0:
-            pygame.draw.circle(surface, (110, 220, 255), (center_x, center_y), 23, 3)
+        if independence_ally:
+            orbit_time = self.independence_animation_time * 2.2
+            for index, color in enumerate(((255, 95, 100), (245, 245, 255), (100, 180, 255))):
+                angle = orbit_time + index * math.tau / 3
+                star_x = center_x + round(math.cos(angle) * 29)
+                star_y = center_y + round(math.sin(angle) * 23)
+                pygame.draw.circle(surface, color, (star_x, star_y), 3)
+                pygame.draw.circle(surface, (255, 255, 255), (star_x, star_y), 1)
+
+            badge = pygame.Rect(center_x - 19, center_y - 37, 38, 13)
+            pygame.draw.rect(surface, (25, 55, 95), badge, border_radius=5)
+            pygame.draw.rect(surface, (125, 220, 255), badge, 1, border_radius=5)
+            badge_text = ALLY_BADGE_FONT.render("ALLY", True, (235, 250, 255))
+            surface.blit(badge_text, badge_text.get_rect(center=badge.center))
 
     def is_dead(self):
         return self.hp <= 0
@@ -2064,38 +2106,41 @@ class Tower:
                 self.y = clamp(self.y, GRID_SIZE // 2, HEIGHT - GRID_SIZE // 2)
 
         self.time_since_shot += dt
-        if self.time_since_shot < self.cooldown:
+        eligible_enemies = [
+            enemy
+            for enemy in enemies
+            if not enemy.is_dead()
+            and not enemy.reached_goal()
+            and enemy.independence_ally_timer <= 0
+            and (enemy.type != "ghost" or enemy.is_visible() or self.type == "phantom")
+            and math.hypot(enemy.x - self.x, enemy.y - self.y) <= self.range
+        ]
+        if self.target not in eligible_enemies:
+            self.target = None
+        if self.target is None and eligible_enemies:
+            self.target = min(
+                eligible_enemies,
+                key=lambda enemy: math.hypot(enemy.x - self.x, enemy.y - self.y),
+            )
+        if self.target is None:
             return None
 
-        nearest = None
-        best_dist = float("inf")
-        for enemy in enemies:
-            if enemy.is_dead() or enemy.reached_goal() or enemy.independence_ally_timer > 0:
-                continue
-            if enemy.type == "ghost" and not enemy.is_visible() and self.type != "phantom":
-                continue
-            dx = enemy.x - self.x
-            dy = enemy.y - self.y
-            dist = math.hypot(dx, dy)
-            if dist <= self.range and dist < best_dist:
-                nearest = enemy
-                best_dist = dist
-
-        if nearest:
-            self.target = nearest
-            dx = nearest.x - self.x
-            dy = nearest.y - self.y
-            self.aim_angle = math.atan2(dy, dx)
-            self.time_since_shot = 0.0
+        dx = self.target.x - self.x
+        dy = self.target.y - self.y
+        self.aim_angle = math.atan2(dy, dx)
+        if self.time_since_shot < self.cooldown:
+            return None
+        self.time_since_shot = 0.0
+        if self.target:
             if self.type == "freeze":
-                return FreezeProjectile(self.x, self.y, nearest, self.damage, self.color)
+                return FreezeProjectile(self.x, self.y, self.target, self.damage, self.color)
             if self.type == "mine_tower":
-                return BombProjectile(self.x, self.y, nearest, self.damage, self.color, enemies=enemies)
+                return BombProjectile(self.x, self.y, self.target, self.damage, self.color, enemies=enemies)
             if self.type == "milk_bob":
                 return BombProjectile(
                     self.x,
                     self.y,
-                    nearest,
+                    self.target,
                     self.damage,
                     self.color,
                     speed=320,
@@ -2105,9 +2150,7 @@ class Tower:
                     trail_color=(225, 240, 255),
                     highlight_color=(255, 255, 255),
                 )
-            return Projectile(self.x, self.y, nearest, self.damage, self.color)
-        self.target = None
-        return None
+            return Projectile(self.x, self.y, self.target, self.damage, self.color)
 
     def draw(self, surface, show_range=True):
         base_x, base_y = int(self.x), int(self.y)
@@ -3329,6 +3372,35 @@ class EasterBunny:
         pygame.draw.circle(surface, (35, 30, 30), (x - 4, y - 14 - hop), 2)
         pygame.draw.circle(surface, (35, 30, 30), (x + 5, y - 14 - hop), 2)
         pygame.draw.circle(surface, (235, 120, 140), (x + 1, y - 8 - hop), 3)
+        pygame.draw.arc(
+            surface,
+            (105, 65, 38),
+            (x + 9, y - 7 - hop, 20, 20),
+            0,
+            math.pi,
+            3,
+        )
+        pygame.draw.ellipse(surface, (110, 65, 55), (x + 12, y + 1 - hop, 7, 10))
+        pygame.draw.ellipse(surface, (80, 145, 85), (x + 19, y - hop, 7, 11))
+        pygame.draw.ellipse(surface, (245, 215, 90), (x + 13, y + 3 - hop, 4, 6))
+        pygame.draw.ellipse(surface, (245, 240, 220), (x + 20, y + 2 - hop, 4, 7))
+        pygame.draw.polygon(surface, (165, 112, 62), [
+            (x + 8, y + 5 - hop),
+            (x + 29, y + 5 - hop),
+            (x + 26, y + 20 - hop),
+            (x + 11, y + 20 - hop),
+        ])
+        pygame.draw.line(surface, (105, 65, 38), (x + 8, y + 5 - hop), (x + 29, y + 5 - hop), 3)
+        for weave_y in (10, 15):
+            pygame.draw.line(
+                surface,
+                (205, 155, 95),
+                (x + 11, y + weave_y - hop),
+                (x + 27, y + weave_y - hop),
+                1,
+            )
+        pygame.draw.line(surface, (120, 75, 42), (x + 15, y + 7 - hop), (x + 14, y + 18 - hop), 1)
+        pygame.draw.line(surface, (120, 75, 42), (x + 22, y + 7 - hop), (x + 23, y + 18 - hop), 1)
 
 
 class Game:
@@ -6385,22 +6457,145 @@ def draw_map_selection(
     return costume_buttons
 
 
-def draw_backstory(surface):
-    surface.fill((22, 28, 42))
-    title = FONT.render("The Monster Roads", True, (255, 225, 145))
-    surface.blit(title, (40, 44))
-    story_lines = [
-        "Another great war has occured, and the only survivors are",
-        "You and, sick-man stickman?!? Anyway, with the enemies",
-        "marching in, you have to stop them. Or else, they will",
-        "quickly end you. Let's hope sick-man stickman can help!",
-    ]
-    for index, line in enumerate(story_lines):
-        text = FONT.render(line, True, (225, 230, 240))
-        surface.blit(text, (50, 105 + index * 30))
+def draw_backstory(surface, elapsed=0.0):
+    scene_index = min(max(int(max(0.0, elapsed) / BACKSTORY_SCENE_DURATION), 0), BACKSTORY_SCENE_COUNT - 1)
+    scene_time = (max(0.0, elapsed) % BACKSTORY_SCENE_DURATION) / BACKSTORY_SCENE_DURATION
+    background_colors = ((18, 24, 40), (36, 20, 28), (18, 33, 46), (20, 28, 39))
+    surface.fill(background_colors[scene_index])
 
-    controls = FONT.render("Click anywhere or press Escape to return", True, (180, 200, 225))
-    surface.blit(controls, (50, 370))
+    pygame.draw.rect(surface, (6, 8, 15), (0, 0, WIDTH, 44))
+    pygame.draw.rect(surface, (6, 8, 15), (0, HEIGHT - 44, WIDTH, 44))
+    pygame.draw.rect(surface, (44, 49, 58), (0, 410, WIDTH, 186))
+
+    def draw_stickman(x, ground_y, color, bob=0, sick=False):
+        y = int(ground_y + bob)
+        if sick:
+            ink = (250, 250, 250)
+            pygame.draw.circle(surface, (255, 220, 90), (x, y - 58), 19)
+            pygame.draw.circle(surface, ink, (x, y - 58), 19, 3)
+            pygame.draw.circle(surface, (35, 35, 48), (x, y - 19), 12)
+            pygame.draw.line(surface, ink, (x, y - 39), (x, y + 20), 8)
+            pygame.draw.line(surface, ink, (x, y - 19), (x - 27, y + 2), 7)
+            pygame.draw.line(surface, ink, (x, y - 19), (x + 30, y - 4), 7)
+            pygame.draw.line(surface, ink, (x, y + 20), (x - 21, y + 54), 7)
+            pygame.draw.line(surface, ink, (x, y + 20), (x + 25, y + 54), 7)
+            pygame.draw.ellipse(surface, (25, 25, 35), (x - 27, y - 86, 54, 11))
+            pygame.draw.rect(surface, (35, 35, 48), (x - 22, y - 105, 44, 21), border_radius=4)
+            pygame.draw.rect(surface, (205, 65, 65), (x - 22, y - 91, 44, 7))
+            hat_label = pygame.font.SysFont("arial", 8, bold=True).render("sick-man", True, (255, 240, 180))
+            surface.blit(hat_label, hat_label.get_rect(center=(x, y - 97)))
+            pygame.draw.circle(surface, (255, 220, 90), (x - 5, y - 59), 2)
+            pygame.draw.circle(surface, (255, 220, 90), (x + 5, y - 59), 2)
+        else:
+            pygame.draw.circle(surface, color, (x, y - 58), 19)
+            pygame.draw.line(surface, color, (x, y - 39), (x, y + 20), 8)
+            pygame.draw.line(surface, color, (x, y - 19), (x - 27, y + 2), 7)
+            pygame.draw.line(surface, color, (x, y - 19), (x + 30, y - 4), 7)
+            pygame.draw.line(surface, color, (x, y + 20), (x - 21, y + 54), 7)
+            pygame.draw.line(surface, color, (x, y + 20), (x + 25, y + 54), 7)
+
+    def draw_enemy(x, y, size, color=(123, 66, 79)):
+        pygame.draw.circle(surface, color, (x, y), size)
+        pygame.draw.circle(surface, (255, 105, 78), (x - size // 3, y - 2), max(2, size // 6))
+        pygame.draw.circle(surface, (255, 105, 78), (x + size // 3, y - 2), max(2, size // 6))
+
+    if scene_index == 0:
+        pygame.draw.circle(surface, (115, 69, 57), (WIDTH // 2, 305), 67)
+        pygame.draw.circle(surface, (82, 57, 55), (WIDTH // 2, 315), 48)
+        for tower_x, height in ((105, 110), (250, 168), (585, 137), (760, 92)):
+            pygame.draw.rect(surface, (35, 38, 48), (tower_x - 27, 410 - height, 54, height))
+            pygame.draw.polygon(
+                surface,
+                (29, 33, 44),
+                [(tower_x - 35, 410 - height), (tower_x, 382 - height), (tower_x + 35, 410 - height)],
+            )
+            pygame.draw.line(
+                surface,
+                (112, 57, 53),
+                (tower_x, 410 - height - 20),
+                (tower_x, 410 - height + 12),
+                3,
+            )
+            pygame.draw.line(
+                surface,
+                (112, 57, 53),
+                (tower_x, 410 - height - 18),
+                (tower_x + 22, 410 - height - 9),
+                3,
+            )
+        for index in range(5):
+            smoke_x = 185 + index * 112
+            smoke_y = int(292 - ((scene_time * 34 + index * 25) % 70))
+            smoke_radius = 15 + index % 3 * 5
+            pygame.draw.circle(surface, (57, 60, 69), (smoke_x, smoke_y), smoke_radius)
+        for debris_x, debris_y, debris_size in ((305, 390, 18), (520, 378, 25), (670, 397, 15)):
+            pygame.draw.line(
+                surface,
+                (139, 103, 75),
+                (debris_x - debris_size, debris_y - debris_size // 2),
+                (debris_x + debris_size, debris_y + debris_size // 2),
+                6,
+            )
+            pygame.draw.line(
+                surface,
+                (139, 103, 75),
+                (debris_x - debris_size // 2, debris_y + debris_size),
+                (debris_x + debris_size // 2, debris_y - debris_size),
+                6,
+            )
+    elif scene_index == 1:
+        pygame.draw.circle(surface, (232, 179, 110), (WIDTH - 110, 178), 40)
+        pygame.draw.polygon(surface, (73, 62, 53), [(365, 250), (475, 250), (WIDTH, 410), (0, 410)])
+        draw_stickman(WIDTH // 2 - 54, 350, (205, 211, 199), math.sin(scene_time * math.tau) * 3)
+        sick_bob = math.sin(scene_time * math.tau + 1.4) * 5
+        draw_stickman(WIDTH // 2 + 60, 350, (255, 220, 90), sick_bob, sick=True)
+        for index in range(3):
+            sweat_y = int(250 + ((scene_time * 60 + index * 26) % 54))
+            pygame.draw.circle(surface, (131, 215, 236), (WIDTH // 2 + 82 + index * 9, sweat_y), 4)
+    elif scene_index == 2:
+        pygame.draw.polygon(surface, (80, 68, 58), [(340, 220), (500, 220), (WIDTH, 410), (0, 410)])
+        pygame.draw.polygon(surface, (117, 91, 64), [(407, 220), (433, 220), (WIDTH // 2 + 100, 410), (WIDTH // 2 - 100, 410)])
+        for index in range(9):
+            progress = (scene_time * 0.75 + index / 9) % 1
+            enemy_x = int(WIDTH // 2 + math.sin(index * 2.4) * (12 + progress * 175))
+            enemy_y = int(242 + progress * 154)
+            size = int(7 + progress * 13)
+            draw_enemy(enemy_x, enemy_y, size)
+            if index % 3 == 0:
+                pygame.draw.line(surface, (112, 76, 57), (enemy_x, enemy_y + size), (enemy_x - 7, enemy_y + size + 12), 3)
+                pygame.draw.line(surface, (112, 76, 57), (enemy_x, enemy_y + size), (enemy_x + 7, enemy_y + size + 12), 3)
+        draw_stickman(95, 355, (205, 211, 199), math.sin(scene_time * math.tau) * 2)
+        draw_stickman(155, 355, (255, 220, 90), math.sin(scene_time * math.tau + 1.4) * 4, sick=True)
+    else:
+        shield_glow = pygame.Surface((WIDTH, 360), pygame.SRCALPHA)
+        shield_radius = int(95 + 12 * math.sin(scene_time * math.tau))
+        pygame.draw.circle(shield_glow, (102, 215, 139, 30), (WIDTH // 2 + 28, 223), shield_radius)
+        surface.blit(shield_glow, (0, 100))
+        pygame.draw.arc(surface, (125, 232, 151), (WIDTH // 2 - 82, 189, 220, 220), -1.35, 1.35, 5)
+        draw_stickman(WIDTH // 2 - 50, 365, (205, 211, 199), math.sin(scene_time * math.tau) * 2)
+        draw_stickman(WIDTH // 2 + 31, 365, (255, 220, 90), math.sin(scene_time * math.tau + 1.4) * 4, sick=True)
+        for index in range(6):
+            enemy_x = int(120 + index * 47 + math.sin(scene_time * math.tau + index) * 4)
+            enemy_y = 295 + index % 2 * 35
+            draw_enemy(enemy_x, enemy_y, 14, (106, 58, 73))
+        for index in range(5):
+            mote_angle = scene_time * math.tau + index * math.tau / 5
+            mote_x = int(WIDTH // 2 + 28 + math.cos(mote_angle) * 92)
+            mote_y = int(289 + math.sin(mote_angle) * 68)
+            pygame.draw.circle(surface, (166, 255, 178), (mote_x, mote_y), 5)
+        pygame.draw.circle(surface, (119, 231, 153), (WIDTH // 2 - 94, 286), 13)
+
+    title = BACKSTORY_TITLE_FONT.render("The Monster Roads", True, (255, 224, 155))
+    surface.blit(title, title.get_rect(center=(WIDTH // 2, 105)))
+    subtitle = FONT.render(BACKSTORY_STORY_LINES[scene_index], True, (230, 233, 239))
+    surface.blit(subtitle, subtitle.get_rect(center=(WIDTH // 2, 510)))
+
+    progress_width = int((elapsed % BACKSTORY_DURATION) / BACKSTORY_DURATION * (WIDTH - 80))
+    pygame.draw.rect(surface, (75, 79, 91), (40, HEIGHT - 18, WIDTH - 80, 4), border_radius=2)
+    pygame.draw.rect(surface, (230, 190, 105), (40, HEIGHT - 18, progress_width, 4), border_radius=2)
+    controls = FONT.render("Click or press Esc to skip", True, (180, 192, 208))
+    surface.blit(controls, controls.get_rect(center=(WIDTH // 2, HEIGHT - 29)))
+    return scene_index
 
 
 def main():
@@ -6425,6 +6620,7 @@ def main():
     game = None
     in_menu = True
     show_backstory = False
+    backstory_time = 0.0
     show_costume_window = False
     show_seasonal_menu = False
     seasonal_date = date.today()
@@ -6445,6 +6641,11 @@ def main():
 
     while running:
         dt = CLOCK.tick(FPS) / 1000.0
+        if in_menu and show_backstory:
+            backstory_time += dt
+            if backstory_time >= BACKSTORY_DURATION:
+                show_backstory = False
+                backstory_time = 0.0
         achievement_animation_time += dt
         achievement_check_timer = update_achievement_check_timer(achievement_check_timer, dt, game)
         update_achievement_popups(dt)
@@ -6533,8 +6734,9 @@ def main():
             elif event.type == pygame.KEYDOWN:
                 if in_menu:
                     if show_backstory:
-                        if event.key == pygame.K_ESCAPE:
+                        if event.key in (pygame.K_ESCAPE, pygame.K_SPACE):
                             show_backstory = False
+                            backstory_time = 0.0
                         continue
                     if show_seasonal_menu:
                         if event.key == pygame.K_ESCAPE:
@@ -6687,6 +6889,7 @@ def main():
                 if in_menu:
                     if show_backstory:
                         show_backstory = False
+                        backstory_time = 0.0
                     elif show_seasonal_menu:
                         if SEASONAL_MAPS_BACK_RECT.collidepoint(event.pos):
                             show_seasonal_menu = False
@@ -6865,6 +7068,7 @@ def main():
                                     break
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
+                        backstory_time = 0.0
                     elif SEASONAL_MAPS_BUTTON_RECT.collidepoint(event.pos):
                         show_seasonal_menu = True
                     elif ACHIEVEMENTS_BUTTON_RECT.collidepoint(event.pos):
@@ -6910,7 +7114,7 @@ def main():
 
         if in_menu:
             if show_backstory:
-                draw_backstory(SCREEN)
+                draw_backstory(SCREEN, backstory_time)
             elif show_seasonal_menu:
                 menu_seasonal_map_buttons = draw_seasonal_maps_menu(
                     SCREEN,

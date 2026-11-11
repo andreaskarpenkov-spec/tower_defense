@@ -774,6 +774,35 @@ class SandboxModeTest(unittest.TestCase):
         self.assertTrue(buttons["previous_month"].collidepoint(buttons["previous_month"].center))
         self.assertTrue(buttons["next_month"].collidepoint(buttons["next_month"].center))
 
+    def test_backstory_trailer_draws_animated_scenes(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        frames = []
+        self.assertEqual(
+            main.BACKSTORY_STORY_LINES,
+            (
+                "Another great war has occured, and the only survivors are",
+                "You and, sick-man stickman?!? Anyway, with the enemies",
+                "marching in, you have to stop them. Or else, they will",
+                "quickly end you. Let's hope sick-man stickman can help!",
+            ),
+        )
+
+        for scene_index in range(main.BACKSTORY_SCENE_COUNT):
+            elapsed = scene_index * main.BACKSTORY_SCENE_DURATION
+            self.assertEqual(main.draw_backstory(surface, elapsed), scene_index)
+            frames.append(pygame.image.tobytes(surface, "RGB"))
+            if scene_index == 1:
+                self.assertEqual(surface.get_at((480, 296))[:3], (255, 220, 90))
+
+        self.assertEqual(len(set(frames)), main.BACKSTORY_SCENE_COUNT)
+        first_scene_frame = frames[0]
+        main.draw_backstory(surface, 1.0)
+        self.assertNotEqual(pygame.image.tobytes(surface, "RGB"), first_scene_frame)
+        self.assertEqual(
+            main.draw_backstory(surface, main.BACKSTORY_DURATION - 0.01),
+            main.BACKSTORY_SCENE_COUNT - 1,
+        )
+
     def test_seasonal_maps_menu_shows_present_maze_when_closed(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
 
@@ -922,6 +951,33 @@ class SandboxModeTest(unittest.TestCase):
         shooter.update(1.0, [nova])
         self.assertEqual(shooter.projectiles, [])
 
+    def test_tower_keeps_target_until_it_dies_or_leaves_range(self):
+        path = [(40, 100), (800, 100)]
+        tower = Tower(100, 100, "basic")
+        tower.range = 100
+        closest = Enemy(path, speed=0, hp=200, reward=1)
+        next_closest = Enemy(path, speed=0, hp=200, reward=1)
+        new_closest = Enemy(path, speed=0, hp=200, reward=1)
+        closest.x, closest.y = 140, 100
+        next_closest.x, next_closest.y = 160, 100
+        new_closest.x, new_closest.y = 110, 100
+
+        first_shot = tower.update(tower.cooldown, [closest, next_closest])
+        self.assertIs(first_shot.target, closest)
+
+        self.assertIsNone(tower.update(0.1, [closest, next_closest, new_closest]))
+        self.assertIs(tower.target, closest)
+        continued_shot = tower.update(tower.cooldown, [closest, next_closest, new_closest])
+        self.assertIs(continued_shot.target, closest)
+
+        closest.x = 250
+        self.assertIsNone(tower.update(0.1, [closest, next_closest, new_closest]))
+        self.assertIs(tower.target, new_closest)
+
+        new_closest.hp = 0
+        self.assertIsNone(tower.update(0.1, [closest, next_closest, new_closest]))
+        self.assertIs(tower.target, next_closest)
+
     def test_independence_map_converts_a_random_shooter_every_ten_seconds(self):
         game = Game(main.get_map_path("Independence!"), map_name="Independence!", sandbox=True)
         game.wave_ready = True
@@ -960,6 +1016,28 @@ class SandboxModeTest(unittest.TestCase):
         self.assertIs(tower.target, regular)
         player_shot = main.Projectile(100, 100, ally, 20, (255, 255, 255))
         self.assertFalse(player_shot.update(0.1))
+
+    def test_independence_shooter_has_distinct_animated_ally_graphics(self):
+        normal = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="shooter")
+        ally = Enemy(MAPS["Classic"], speed=0, hp=100, reward=1, enemy_type="shooter")
+        normal.x = ally.x = 200
+        normal.y = ally.y = 200
+        ally.independence_ally_timer = 20
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        normal.draw(surface)
+        normal_frame = pygame.image.tobytes(surface, "RGB")
+
+        surface.fill((0, 0, 0))
+        ally.draw(surface)
+        ally_frame = pygame.image.tobytes(surface, "RGB")
+        self.assertNotEqual(normal_frame, ally_frame)
+
+        first_frame = pygame.image.tobytes(surface, "RGB")
+        ally.independence_animation_time = 0.5
+        surface.fill((0, 0, 0))
+        ally.draw(surface)
+        second_frame = pygame.image.tobytes(surface, "RGB")
+        self.assertNotEqual(first_frame, second_frame)
 
     def test_independence_shooter_disappears_after_twenty_seconds_without_reward(self):
         game = Game(main.get_map_path("Independence!"), map_name="Independence!", sandbox=True)
@@ -1004,6 +1082,17 @@ class SandboxModeTest(unittest.TestCase):
         self.assertIsNotNone(game.easter_bunny)
         self.assertIsNone(classic.easter_bunny)
         self.assertIn("chocolate", main.BESTIARY)
+
+    def test_easter_bunny_draws_a_woven_basket_with_eggs(self):
+        bunny = main.EasterBunny()
+        bunny.x, bunny.y = 200, 200
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        surface.fill((0, 0, 0))
+
+        bunny.draw(surface)
+
+        self.assertEqual(surface.get_at((220, 212))[:3], (165, 112, 62))
+        self.assertEqual(surface.get_at((215, 203))[:3], (245, 215, 90))
 
     def test_walker_crossing_freeze_tower_unlocks_and_saves_cactus(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
