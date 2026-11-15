@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pygame
 
@@ -14,6 +14,90 @@ from main import Enemy, Game, MAPS, MAP_UNLOCK_COST, TOWER_UNLOCK_WAVES, Tower, 
 
 
 class SandboxModeTest(unittest.TestCase):
+    def test_application_window_icon_shows_a_basic_tower(self):
+        self.assertEqual(main.APP_ICON.get_size(), (48, 48))
+        expected_icon = pygame.Surface((48, 48), pygame.SRCALPHA)
+        Tower(24, 24, "basic").draw(expected_icon, show_range=False)
+        self.assertEqual(
+            pygame.image.tobytes(main.APP_ICON, "RGBA"),
+            pygame.image.tobytes(expected_icon, "RGBA"),
+        )
+
+    def test_phone_mode_draws_touch_start_and_tower_picker(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        main.draw_map_selection(
+            surface,
+            "Classic",
+            False,
+            {"Classic", "Loop", "Cross"},
+            0,
+            set(),
+            "classic",
+            phone_mode=True,
+        )
+        self.assertEqual(
+            surface.get_at(
+                (main.PHONE_START_BUTTON_RECT.left + 5, main.PHONE_START_BUTTON_RECT.top + 5)
+            )[:3],
+            (63, 128, 88),
+        )
+        self.assertEqual(
+            surface.get_at(
+                (main.PHONE_MODE_BUTTON_RECT.left + 5, main.PHONE_MODE_BUTTON_RECT.top + 5)
+            )[:3],
+            (73, 132, 88),
+        )
+
+        game = Game(MAPS["Classic"], sandbox=True)
+        game.win_coins = 5
+        controls = main.draw_phone_mode_controls(surface, game, tower_menu_open=True)
+        self.assertIn("basic", controls)
+        self.assertIn("rapid", controls)
+        self.assertIn("close", controls)
+        self.assertTrue(main.select_phone_tower(game, "rapid"))
+        self.assertEqual(game.selected_tower, "rapid")
+
+    def test_phone_touch_events_convert_to_clicks_and_drag_motion(self):
+        down = pygame.event.Event(
+            pygame.FINGERDOWN,
+            {"x": 0.5, "y": 0.25, "finger_id": 1, "touch_id": 0},
+        )
+        converted_down = main.phone_touch_to_mouse_event(down)
+        self.assertEqual(converted_down.type, pygame.MOUSEBUTTONDOWN)
+        self.assertEqual(converted_down.pos, (420, 160))
+        self.assertEqual(converted_down.button, 1)
+
+        motion = pygame.event.Event(
+            pygame.FINGERMOTION,
+            {"x": 0.6, "y": 0.5, "dx": 0.1, "dy": 0.25, "finger_id": 1, "touch_id": 0},
+        )
+        converted_motion = main.phone_touch_to_mouse_event(motion)
+        self.assertEqual(converted_motion.type, pygame.MOUSEMOTION)
+        self.assertEqual(converted_motion.pos, (504, 320))
+        self.assertEqual(converted_motion.rel, (84, 160))
+
+        up = pygame.event.Event(
+            pygame.FINGERUP,
+            {"x": 0.6, "y": 0.5, "finger_id": 1, "touch_id": 0},
+        )
+        self.assertEqual(main.phone_touch_to_mouse_event(up).type, pygame.MOUSEBUTTONUP)
+
+    def test_tower_directory_window_opens_or_reuses_running_process(self):
+        started_process = object()
+        with patch.object(main, "open_tower_directory_window", return_value=started_process) as open_window:
+            self.assertIs(main.ensure_tower_directory_window(None, sandbox=True), started_process)
+            open_window.assert_called_once_with(True)
+
+            running_process = Mock()
+            running_process.poll.return_value = None
+            self.assertIs(main.ensure_tower_directory_window(running_process), running_process)
+            open_window.assert_called_once_with(True)
+
+            exited_process = Mock()
+            exited_process.poll.return_value = 0
+            self.assertIs(main.ensure_tower_directory_window(exited_process), started_process)
+            open_window.assert_called_with(False)
+
     def test_seasonal_map_availability_uses_inclusive_annual_date_ranges(self):
         seasonal_map = {
             "path": [(0, 100), (840, 100)],
@@ -1484,6 +1568,55 @@ class SandboxModeTest(unittest.TestCase):
 
         self.assertFalse(game.can_place(480, 200))
 
+    def test_menu_key_five_selects_roundabout_when_unlocked(self):
+        self.assertEqual(main.map_selection_for_hotkey(pygame.K_5, {"Roundabout"}), "Roundabout")
+        self.assertIsNone(main.map_selection_for_hotkey(pygame.K_5, {"Classic", "Loop", "Cross"}))
+        self.assertEqual(main.map_selection_for_hotkey(pygame.K_4, {"Spiral"}), "Spiral")
+        self.assertEqual(main.MAP_SELECTION_HOTKEYS[pygame.K_5], "Roundabout")
+
+    def test_main_menu_buttons_do_not_overlap_tower_unlock_text(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        main.draw_map_selection(
+            surface,
+            "Classic",
+            False,
+            {"Classic", "Loop", "Cross", "Spiral", "Roundabout"},
+            0,
+            set(),
+            "classic",
+        )
+        unlock_rules = [
+            "Basic: start",
+            "Rapid: wave 2",
+            "Mine: wave 2",
+            "Sniper: wave 3",
+            "Freeze: wave 4",
+            "Boinger: wave 5",
+            "Walker: wave 6",
+            "Runny Pew-Pew: wave 6",
+            "  Mine Tower: ???",
+            "   cactus: ???",
+        ]
+        menu_buttons = (
+            main.ACHIEVEMENTS_BUTTON_RECT,
+            main.BESTIARY_BUTTON_RECT,
+            main.WIKI_BUTTON_RECT,
+        )
+        self.assertEqual(
+            [button.top for button in menu_buttons],
+            [340, 395, 450],
+        )
+        self.assertLessEqual(menu_buttons[-1].bottom, main.HEIGHT)
+        for index, rule in enumerate(unlock_rules):
+            text_rect = main.FONT.render(rule, True, (220, 220, 220)).get_rect(
+                topleft=(440, 70 + index * 22)
+            )
+            for button_rect in menu_buttons:
+                self.assertFalse(
+                    text_rect.colliderect(button_rect),
+                    f"{rule!r} overlaps {button_rect}",
+                )
+
     def test_roundabout_enemies_complete_a_loop_before_exiting_east(self):
         path = MAPS["Roundabout"]
         entry = (290, 320)
@@ -1835,6 +1968,25 @@ class SandboxModeTest(unittest.TestCase):
 
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--wiki")
+
+    def test_wiki_button_is_only_drawn_on_the_home_screen(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        game = Game(MAPS["Classic"])
+
+        with patch.object(main, "draw_wiki_button") as draw_wiki_button:
+            game.draw(surface)
+            draw_wiki_button.assert_not_called()
+
+            main.draw_map_selection(
+                surface,
+                "Classic",
+                False,
+                {"Classic", "Loop", "Cross"},
+                0,
+                set(),
+                "classic",
+            )
+            draw_wiki_button.assert_called_once_with(surface)
 
     def test_wiki_edit_persists_locally_without_cloud_settings(self):
         defaults = {"Basics": "Default basics", "Towers": "Default towers"}

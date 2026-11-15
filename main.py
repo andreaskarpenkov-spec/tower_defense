@@ -899,6 +899,13 @@ MAP_BACKGROUNDS = {
 
 DEFAULT_MAP = "Classic"
 FREE_MAPS = {"Classic", "Loop", "Cross"}
+MAP_SELECTION_HOTKEYS = {
+    pygame.K_1: "Classic",
+    pygame.K_2: "Loop",
+    pygame.K_3: "Cross",
+    pygame.K_4: "Spiral",
+    pygame.K_5: "Roundabout",
+}
 SPIRAL_BUY_RECT = pygame.Rect(300, 195, 90, 26)
 ROUNDABOUT_BUY_RECT = pygame.Rect(320, 225, 90, 26)
 MAP_BUY_RECTS = {
@@ -930,10 +937,31 @@ SEASONAL_DATE_PREVIOUS_MONTH_RECT = pygame.Rect(WIDTH // 2 - 170, HEIGHT // 2 - 
 SEASONAL_DATE_NEXT_MONTH_RECT = pygame.Rect(WIDTH // 2 + 128, HEIGHT // 2 - 148, 42, 34)
 SEASONAL_DATE_CLOSE_RECT = pygame.Rect(WIDTH // 2 - 55, HEIGHT // 2 + 173, 110, 34)
 SEASONAL_DATE_GRID_RECT = pygame.Rect(WIDTH // 2 - 147, HEIGHT // 2 - 102, 294, 240)
-ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 285, 220, 42)
-BESTIARY_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
-WIKI_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
-WIKI_GAME_BUTTON_RECT = pygame.Rect(20, 570, 86, 34)
+ACHIEVEMENTS_BUTTON_RECT = pygame.Rect(440, 340, 220, 42)
+BESTIARY_BUTTON_RECT = pygame.Rect(440, 395, 220, 42)
+WIKI_BUTTON_RECT = pygame.Rect(440, 450, 220, 42)
+PHONE_MODE_BUTTON_RECT = pygame.Rect(440, 505, 220, 48)
+PHONE_START_BUTTON_RECT = pygame.Rect(40, 445, 180, 48)
+PHONE_TOWER_BUTTON_RECT = pygame.Rect(20, HEIGHT - 60, 190, 48)
+PHONE_TOWER_PANEL_RECT = pygame.Rect(40, 52, WIDTH - 80, 520)
+PHONE_TOWER_CLOSE_RECT = pygame.Rect(WIDTH - 120, 66, 54, 34)
+PHONE_TOWER_CHOICES = (
+    "basic",
+    "rapid",
+    "sniper",
+    "mine",
+    "freeze",
+    "boinger",
+    "walker",
+    "mine_tower",
+    "warden",
+    "nova",
+    "spawner",
+    "gunner",
+    "cactus",
+    "phantom",
+    "milk_bob",
+)
 HOME_BUTTON_RECT = pygame.Rect(WIDTH // 2 - 90, HEIGHT // 2 + 58, 180, 38)
 HOME_COSTUME_WINDOW_RECT = pygame.Rect(120, 70, 600, 560)
 HOME_COSTUME_CLOSE_RECT = pygame.Rect(650, 84, 52, 24)
@@ -1375,6 +1403,11 @@ def purchase_map(map_name, win_coins, unlocked_maps):
         return win_coins, False
     unlocked_maps.add(map_name)
     return win_coins - cost, True
+
+
+def map_selection_for_hotkey(key, unlocked_maps):
+    map_name = MAP_SELECTION_HOTKEYS.get(key)
+    return map_name if map_name in unlocked_maps else None
 
 
 def load_highest_cleared_wave():
@@ -2350,6 +2383,11 @@ class Tower:
 
         if show_range:
             pygame.draw.circle(surface, self.ring, (base_x, base_y), self.range, 1)
+
+
+APP_ICON = pygame.Surface((48, 48), pygame.SRCALPHA)
+Tower(24, 24, "basic").draw(APP_ICON, show_range=False)
+pygame.display.set_icon(APP_ICON)
 
 
 class Projectile:
@@ -5233,7 +5271,6 @@ class Game:
             text = FONT.render(line, True, (240, 240, 240))
             surface.blit(text, (WIDTH - 20 - text.get_width(), 12 + i * 20))
 
-        draw_wiki_button(surface, WIKI_GAME_BUTTON_RECT)
         button_color = (70, 130, 190) if self.wave_index + 1 < len(WAVES) else (90, 90, 90)
         border_color = (170, 210, 255) if self.wave_index + 1 < len(WAVES) else (130, 130, 130)
         pygame.draw.rect(surface, button_color, self.wave_button_rect, border_radius=8)
@@ -5459,6 +5496,7 @@ def draw_achievements_window(surface, achievements, elapsed_seconds=0.0, scroll_
 
 def run_achievements_window():
     surface = pygame.display.set_mode((600, 560))
+    pygame.display.set_icon(APP_ICON)
     pygame.display.set_caption("Achievements")
     clock = pygame.time.Clock()
     running = True
@@ -5533,6 +5571,7 @@ def draw_tower_directory_window(surface, entries, scroll_offset=0):
 
 def run_tower_directory_window(sandbox=False):
     surface = pygame.display.set_mode((760, 680))
+    pygame.display.set_icon(APP_ICON)
     pygame.display.set_caption("Tower Directory")
     clock = pygame.time.Clock()
     running = True
@@ -5572,6 +5611,12 @@ def open_tower_directory_window(sandbox=False):
     if sandbox:
         command.append("--tower-sandbox")
     return subprocess.Popen(command, cwd=os.path.dirname(os.path.abspath(__file__)))
+
+
+def ensure_tower_directory_window(process, sandbox=False):
+    if process is not None and process.poll() is None:
+        return process
+    return open_tower_directory_window(sandbox)
 
 
 def draw_achievements_button(surface):
@@ -5811,6 +5856,7 @@ def draw_bestiary_window(surface, scroll_offset=0):
 
 def run_bestiary_window():
     surface = pygame.display.set_mode((600, 560))
+    pygame.display.set_icon(APP_ICON)
     pygame.display.set_caption("Bestiary")
     clock = pygame.time.Clock()
     running = True
@@ -6110,6 +6156,7 @@ def draw_wiki_window(
 
 def run_wiki_window():
     surface = pygame.display.set_mode((760, 680))
+    pygame.display.set_icon(APP_ICON)
     pygame.display.set_caption("Game Wiki")
     clock = pygame.time.Clock()
     running = True
@@ -6304,6 +6351,7 @@ def draw_map_selection(
     object_id="none",
     unlocked_objects=None,
     achievements=None,
+    phone_mode=False,
 ):
     unlocked_hats = set(unlocked_hats or {"classic"})
     surface.fill((18, 24, 36))
@@ -6503,7 +6551,7 @@ def draw_map_selection(
                 surface.blit(object_label, (object_rect.x + 6, object_rect.y + 3))
 
     if not costume_window_open:
-        info = FONT.render("Press Enter to start. Click an unlocked map to select.", True, (180, 180, 180))
+        info = FONT.render("Press Enter to start. Keys 1-5 or click to select unlocked maps.", True, (180, 180, 180))
         surface.blit(info, (40, 300))
         note = FONT.render("You can change tower types after the game starts.", True, (180, 180, 180))
         surface.blit(note, (40, 330))
@@ -6524,6 +6572,21 @@ def draw_map_selection(
         draw_bestiary_button(surface)
         draw_wiki_button(surface)
         draw_seasonal_maps_button(surface)
+        if phone_mode:
+            pygame.draw.rect(surface, (63, 128, 88), PHONE_START_BUTTON_RECT, border_radius=7)
+            pygame.draw.rect(surface, (165, 230, 180), PHONE_START_BUTTON_RECT, 2, border_radius=7)
+            start_text = FONT.render("START GAME", True, (255, 255, 255))
+            surface.blit(start_text, start_text.get_rect(center=PHONE_START_BUTTON_RECT.center))
+
+        phone_button_color = (73, 132, 88) if phone_mode else (72, 82, 102)
+        pygame.draw.rect(surface, phone_button_color, PHONE_MODE_BUTTON_RECT, border_radius=7)
+        pygame.draw.rect(surface, (185, 210, 220), PHONE_MODE_BUTTON_RECT, 2, border_radius=7)
+        phone_text = FONT.render(
+            f"Phone Mode: {'ON' if phone_mode else 'OFF'}",
+            True,
+            (255, 255, 255),
+        )
+        surface.blit(phone_text, phone_text.get_rect(center=PHONE_MODE_BUTTON_RECT.center))
     return costume_buttons
 
 
@@ -6761,6 +6824,7 @@ def apply_developer_control_command(game, command):
 
 def run_developer_controls_window(connection):
     pygame.display.set_mode(DEVELOPER_CONTROLS_SIZE)
+    pygame.display.set_icon(APP_ICON)
     pygame.display.set_caption("Tower Defense - Developer Controls")
     clock = pygame.time.Clock()
     selected_enemy_type = "ground"
@@ -6836,10 +6900,127 @@ def close_developer_controls_window(process, connection):
         connection.close()
 
 
+def phone_tower_button_rects(game):
+    available_towers = [
+        tower_type
+        for tower_type in PHONE_TOWER_CHOICES
+        if game.is_tower_unlocked(tower_type)
+        and not (
+            TOWER_TYPES.get(tower_type, {}).get("win_cost")
+            and not game.can_buy_win_tower(tower_type)
+        )
+    ]
+    button_width = 220
+    button_height = 62
+    horizontal_gap = 12
+    vertical_gap = 12
+    start_x = PHONE_TOWER_PANEL_RECT.x + 22
+    start_y = PHONE_TOWER_PANEL_RECT.y + 76
+    return {
+        tower_type: pygame.Rect(
+            start_x + (index % 3) * (button_width + horizontal_gap),
+            start_y + (index // 3) * (button_height + vertical_gap),
+            button_width,
+            button_height,
+        )
+        for index, tower_type in enumerate(available_towers)
+    }
+
+
+def select_phone_tower(game, tower_type):
+    if tower_type not in PHONE_TOWER_CHOICES or not game.is_tower_unlocked(tower_type):
+        return False
+    if TOWER_TYPES.get(tower_type, {}).get("win_cost") and not game.can_buy_win_tower(tower_type):
+        return False
+    game.selected_tower = tower_type
+    return True
+
+
+def draw_phone_mode_controls(surface, game, tower_menu_open=False):
+    controls = {"tower_button": PHONE_TOWER_BUTTON_RECT}
+    pygame.draw.rect(surface, (52, 77, 104), PHONE_TOWER_BUTTON_RECT, border_radius=7)
+    pygame.draw.rect(surface, (180, 215, 245), PHONE_TOWER_BUTTON_RECT, 2, border_radius=7)
+    selected_info = TOWER_TYPES.get(game.selected_tower, {})
+    selected_name = selected_info.get("name", game.selected_tower.title())
+    tower_button_text = FONT.render(f"Towers: {selected_name}", True, (255, 255, 255))
+    surface.blit(tower_button_text, tower_button_text.get_rect(center=PHONE_TOWER_BUTTON_RECT.center))
+
+    if not tower_menu_open:
+        return controls
+
+    panel = pygame.Surface(PHONE_TOWER_PANEL_RECT.size, pygame.SRCALPHA)
+    panel.fill((12, 19, 31, 245))
+    surface.blit(panel, PHONE_TOWER_PANEL_RECT.topleft)
+    pygame.draw.rect(surface, (170, 205, 235), PHONE_TOWER_PANEL_RECT, 2, border_radius=10)
+    title = BACKSTORY_TITLE_FONT.render("Choose a tower", True, (255, 230, 160))
+    surface.blit(title, (PHONE_TOWER_PANEL_RECT.x + 22, PHONE_TOWER_PANEL_RECT.y + 18))
+    pygame.draw.rect(surface, (105, 72, 72), PHONE_TOWER_CLOSE_RECT, border_radius=6)
+    pygame.draw.rect(surface, (220, 175, 175), PHONE_TOWER_CLOSE_RECT, 2, border_radius=6)
+    close_text = FONT.render("Close", True, (255, 255, 255))
+    surface.blit(close_text, close_text.get_rect(center=PHONE_TOWER_CLOSE_RECT.center))
+    controls["close"] = PHONE_TOWER_CLOSE_RECT
+
+    for tower_type, rect in phone_tower_button_rects(game).items():
+        controls[tower_type] = rect
+        tower_info = TOWER_TYPES.get(tower_type, {})
+        if tower_type == "mine":
+            label = "Mine"
+            cost_label = f"${MINE_COST}"
+        elif tower_type == "walker":
+            label = "Walker"
+            cost_label = f"${WALKER_COST}"
+        else:
+            label = tower_info["name"]
+            cost_label = (
+                f"{tower_info['win_cost']} win coins"
+                if tower_info.get("win_cost")
+                else f"${tower_info['cost']}"
+            )
+        is_selected = game.selected_tower == tower_type
+        fill_color = (65, 112, 80) if is_selected else (47, 62, 82)
+        border_color = (175, 235, 170) if is_selected else (130, 165, 195)
+        pygame.draw.rect(surface, fill_color, rect, border_radius=7)
+        pygame.draw.rect(surface, border_color, rect, 2, border_radius=7)
+        name_text = FONT.render(label, True, (255, 255, 255))
+        cost_text = FONT.render(cost_label, True, (205, 220, 235))
+        surface.blit(name_text, name_text.get_rect(center=(rect.centerx, rect.y + 21)))
+        surface.blit(cost_text, cost_text.get_rect(center=(rect.centerx, rect.y + 45)))
+    return controls
+
+
+def phone_touch_to_mouse_event(event):
+    if event.type in (pygame.FINGERDOWN, pygame.FINGERUP, pygame.FINGERMOTION):
+        position = (round(event.x * WIDTH), round(event.y * HEIGHT))
+        if event.type == pygame.FINGERDOWN:
+            return pygame.event.Event(
+                pygame.MOUSEBUTTONDOWN,
+                {"pos": position, "button": 1},
+            )
+        if event.type == pygame.FINGERUP:
+            return pygame.event.Event(
+                pygame.MOUSEBUTTONUP,
+                {"pos": position, "button": 1},
+            )
+        return pygame.event.Event(
+            pygame.MOUSEMOTION,
+            {
+                "pos": position,
+                "rel": (round(event.dx * WIDTH), round(event.dy * HEIGHT)),
+                "buttons": (1, 0, 0),
+            },
+        )
+    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP) and getattr(event, "touch", False):
+        return None
+    return event
+
+
 def main():
     check_achievements()
     selected_map = DEFAULT_MAP
     sandbox_mode = False
+    phone_mode = False
+    phone_tower_menu_open = False
+    phone_tower_controls = {}
     unlocked_maps = load_unlocked_maps()
     _, menu_win_coins = load_progress()
     menu_developer_mode_opened = load_developer_mode_state()
@@ -6907,6 +7088,10 @@ def main():
                 menu_hat_text_input = menu_stickman_hat_text
 
         for event in pygame.event.get():
+            if phone_mode or in_menu:
+                event = phone_touch_to_mouse_event(event)
+                if event is None:
+                    continue
             if (
                 event.type == pygame.KEYDOWN
                 and event.unicode
@@ -7052,21 +7237,14 @@ def main():
                             continue
                         game = Game(get_map_path(selected_map), sandbox=sandbox_mode, map_name=selected_map)
                         in_menu = False
-                        if tower_directory_process is None or tower_directory_process.poll() is not None:
-                            tower_directory_process = open_tower_directory_window(game.sandbox)
-                    elif event.key == pygame.K_5:
-                        show_seasonal_menu = True
+                        tower_directory_process = ensure_tower_directory_window(
+                            tower_directory_process, game.sandbox
+                        )
                     elif event.key == pygame.K_s:
                         sandbox_mode = not sandbox_mode
-                    elif event.key == pygame.K_1:
-                        selected_map = list(MAPS.keys())[0]
-                    elif event.key == pygame.K_2:
-                        selected_map = list(MAPS.keys())[1]
-                    elif event.key == pygame.K_3:
-                        selected_map = list(MAPS.keys())[2]
-                    elif event.key == pygame.K_4:
-                        map_name = list(MAPS.keys())[3]
-                        if map_name in unlocked_maps:
+                    elif event.key in MAP_SELECTION_HOTKEYS:
+                        map_name = map_selection_for_hotkey(event.key, unlocked_maps)
+                        if map_name is not None:
                             selected_map = map_name
                 else:
                     if event.key == pygame.K_r and game.game_over and is_map_available_for_play(selected_map, seasonal_date):
@@ -7146,8 +7324,9 @@ def main():
                                     game = Game(get_map_path(map_name), sandbox=sandbox_mode, map_name=map_name)
                                     in_menu = False
                                     show_seasonal_menu = False
-                                    if tower_directory_process is None or tower_directory_process.poll() is not None:
-                                        tower_directory_process = open_tower_directory_window(game.sandbox)
+                                    tower_directory_process = ensure_tower_directory_window(
+                                        tower_directory_process, game.sandbox
+                                    )
                                     break
                     elif show_costume_window:
                         if HOME_COSTUME_CLOSE_RECT.collidepoint(event.pos):
@@ -7309,6 +7488,18 @@ def main():
                                             stickman_objects=menu_stickman_objects,
                                         )
                                     break
+                    elif phone_mode and PHONE_START_BUTTON_RECT.collidepoint(event.pos):
+                        if is_map_available_for_play(selected_map, seasonal_date):
+                            game = Game(
+                                get_map_path(selected_map),
+                                sandbox=sandbox_mode,
+                                map_name=selected_map,
+                            )
+                            in_menu = False
+                            phone_tower_menu_open = False
+                            tower_directory_process = ensure_tower_directory_window(
+                                tower_directory_process, game.sandbox
+                            )
                     elif BACKSTORY_RECT.collidepoint(event.pos):
                         show_backstory = True
                         backstory_time = 0.0
@@ -7322,6 +7513,9 @@ def main():
                     elif WIKI_BUTTON_RECT.collidepoint(event.pos):
                         if wiki_process is None or wiki_process.poll() is not None:
                             wiki_process = open_wiki_window()
+                    elif PHONE_MODE_BUTTON_RECT.collidepoint(event.pos):
+                        phone_mode = not phone_mode
+                        phone_tower_menu_open = False
                     elif menu_developer_mode_opened and HOME_COSTUMES_RECT.collidepoint(event.pos):
                         show_costume_window = True
                     elif any(
@@ -7352,16 +7546,25 @@ def main():
                             if map_row.collidepoint(event.pos) and map_name in unlocked_maps:
                                 selected_map = map_name
                                 break
-                elif WIKI_GAME_BUTTON_RECT.collidepoint(event.pos):
-                    if wiki_process is None or wiki_process.poll() is not None:
-                        wiki_process = open_wiki_window()
                 elif game.game_over and HOME_BUTTON_RECT.collidepoint(event.pos):
                     in_menu = True
                     game = None
                     show_backstory = False
                     show_costume_window = False
+                    phone_tower_menu_open = False
                 elif not game.game_over:
-                    if game.begin_enemy_drag(event.pos):
+                    if phone_mode and phone_tower_menu_open:
+                        if PHONE_TOWER_CLOSE_RECT.collidepoint(event.pos):
+                            phone_tower_menu_open = False
+                        else:
+                            for tower_type, rect in phone_tower_controls.items():
+                                if tower_type in PHONE_TOWER_CHOICES and rect.collidepoint(event.pos):
+                                    if select_phone_tower(game, tower_type):
+                                        phone_tower_menu_open = False
+                                    break
+                    elif phone_mode and PHONE_TOWER_BUTTON_RECT.collidepoint(event.pos):
+                        phone_tower_menu_open = True
+                    elif game.begin_enemy_drag(event.pos):
                         pass
                     elif game.wave_index + 1 < len(WAVES) and game.wave_button_rect.collidepoint(event.pos):
                         game.start_next_wave()
@@ -7466,6 +7669,7 @@ def main():
                     menu_stickman_object,
                     menu_stickman_objects,
                     load_achievements(),
+                    phone_mode=phone_mode,
                 )
         else:
             if not seasonal_date_panel_open:
@@ -7487,6 +7691,14 @@ def main():
                     })
                     developer_controls_last_state = controls_state
             game.draw(SCREEN)
+            if phone_mode and not game.game_over:
+                phone_tower_controls = draw_phone_mode_controls(
+                    SCREEN,
+                    game,
+                    phone_tower_menu_open,
+                )
+            else:
+                phone_tower_controls = {}
 
         if seasonal_date_panel_open:
             seasonal_date_buttons = draw_seasonal_date_panel(
