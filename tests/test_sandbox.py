@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -1466,6 +1467,38 @@ class SandboxModeTest(unittest.TestCase):
         finally:
             if os.path.exists(save_path):
                 os.remove(save_path)
+
+    def test_roundabout_towers_can_be_placed_on_the_road(self):
+        game = Game(MAPS["Roundabout"], map_name="Roundabout", sandbox=True)
+        game.money = 500
+        game.selected_tower = "basic"
+
+        game.place_tower((60, 300))
+        self.assertEqual(len(game.towers), 1)
+        self.assertEqual((game.towers[0].x, game.towers[0].y), (80, 320))
+        self.assertEqual(game.money, 425)
+
+        game.place_tower((480, 200))
+        self.assertEqual(len(game.towers), 2)
+        self.assertEqual((game.towers[1].x, game.towers[1].y), (480, 200))
+
+        self.assertFalse(game.can_place(480, 200))
+
+    def test_roundabout_enemies_complete_a_loop_before_exiting_east(self):
+        path = MAPS["Roundabout"]
+        entry = (290, 320)
+        first_entry_index = path.index(entry)
+        completed_loop_index = path.index(entry, first_entry_index + 1)
+        loop_length = sum(
+            math.hypot(end[0] - start[0], end[1] - start[1])
+            for start, end in zip(path[first_entry_index:completed_loop_index], path[first_entry_index + 1:completed_loop_index + 1])
+        )
+        self.assertGreater(loop_length, 600)
+        self.assertLess(loop_length, 800)
+
+        exit_index = path.index((550, 320), completed_loop_index + 1)
+        self.assertEqual(path[exit_index + 1], (840, 320))
+        self.assertIn((440, 433), path[first_entry_index:completed_loop_index])
 
     def test_saving_stale_progress_does_not_lower_highest_cleared_wave(self):
         with tempfile.NamedTemporaryFile("w", delete=False) as save_file:

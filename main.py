@@ -737,6 +737,24 @@ MAPS = {
         (515, 242),
         (538, 278),
         (550, 320),
+        (538, 362),
+        (515, 398),
+        (480, 422),
+        (440, 433),
+        (400, 433),
+        (360, 422),
+        (325, 398),
+        (302, 362),
+        (290, 320),
+        (302, 278),
+        (325, 242),
+        (360, 218),
+        (400, 207),
+        (440, 207),
+        (480, 218),
+        (515, 242),
+        (538, 278),
+        (550, 320),
         (840, 320),
     ],
 }
@@ -4874,9 +4892,10 @@ class Game:
             self.unlock_achievement("the_beginning")
 
     def can_place(self, x, y):
-        for px, py in self.path_points:
-            if abs(px - x) < GRID_SIZE and abs(py - y) < GRID_SIZE:
-                return False
+        if self.map_name != "Roundabout":
+            for px, py in self.path_points:
+                if abs(px - x) < GRID_SIZE and abs(py - y) < GRID_SIZE:
+                    return False
         for tower in self.towers:
             if abs(tower.x - x) < GRID_SIZE and abs(tower.y - y) < GRID_SIZE:
                 return False
