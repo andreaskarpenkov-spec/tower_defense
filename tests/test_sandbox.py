@@ -1946,7 +1946,10 @@ class SandboxModeTest(unittest.TestCase):
         surface = pygame.Surface((500, 300))
         pages = main.get_wiki_pages()
 
-        self.assertEqual([title for title, _ in pages], ["Basics", "Towers", "Enemies", "Waves", "Extras"])
+        self.assertEqual(
+            [title for title, _ in pages],
+            ["Basics", "Towers", "Enemies", "Waves", "Seasonal Maps", "Extras"],
+        )
         scroll_offset = main.draw_wiki_window(surface, 1000, page=1)
 
         self.assertEqual(scroll_offset, main.wiki_scroll_limit(300, surface_width=500, page=1))
@@ -1968,6 +1971,15 @@ class SandboxModeTest(unittest.TestCase):
 
         command = popen.call_args.args[0]
         self.assertEqual(command[-1], "--wiki")
+
+    def test_wiki_seasonal_maps_page_lists_every_map_and_availability(self):
+        page = main.get_default_wiki_documents()["Seasonal Maps"]
+
+        for map_name, seasonal_map in main.SEASONAL_MAPS.items():
+            with self.subTest(map_name=map_name):
+                self.assertIn(map_name, page)
+                self.assertIn(seasonal_map["holiday"], page)
+                self.assertIn(seasonal_map["availability_label"], page)
 
     def test_wiki_button_is_only_drawn_on_the_home_screen(self):
         surface = pygame.Surface((main.WIDTH, main.HEIGHT))
@@ -2526,11 +2538,13 @@ class SandboxModeTest(unittest.TestCase):
             set(buttons),
             {
                 "ground", "flyer", "shooter", "lightning", "shielder", "ghost", "medic",
-                "spawn", "toggle_pause", "move_up", "move_left", "move_down", "move_right",
+                "spawn", "toggle_pause", "toggle_insta_cash", "move_up", "move_left",
+                "move_down", "move_right",
             },
         )
         self.assertTrue(buttons["ghost"].collidepoint(buttons["ghost"].center))
         self.assertTrue(buttons["spawn"].collidepoint(buttons["spawn"].center))
+        self.assertTrue(buttons["toggle_insta_cash"].collidepoint(buttons["toggle_insta_cash"].center))
 
         game = Game(MAPS["Classic"])
         game.developer_mode = True
@@ -2546,7 +2560,49 @@ class SandboxModeTest(unittest.TestCase):
         self.assertEqual(enemy.y, start_y - 20)
         main.apply_developer_control_command(game, {"action": "toggle_pause"})
         self.assertTrue(game.enemies_paused)
+        game.money = 0
+        self.assertTrue(main.apply_developer_control_command(game, {"action": "toggle_insta_cash"}))
+        self.assertTrue(game.insta_cash)
+        self.assertTrue(game.can_afford_cash(80))
+        main.apply_developer_control_command(game, {"action": "toggle_insta_cash"})
+        self.assertFalse(game.insta_cash)
+        self.assertFalse(game.can_afford_cash(80))
         self.assertFalse(main.apply_developer_control_command(game, {"action": "close"}))
+
+    def test_insta_cash_allows_tower_placement_and_upgrades_without_spending_cash(self):
+        game = Game(MAPS["Classic"], sandbox=True)
+        game.developer_mode = True
+        game.money = 0
+        game.win_coins = 0
+        self.assertFalse(game.can_buy_win_tower("warden"))
+        self.assertTrue(main.apply_developer_control_command(game, {"action": "toggle_insta_cash"}))
+        self.assertTrue(game.can_buy_win_tower("warden"))
+        self.assertTrue(game.can_afford_win_coins(5))
+
+        placement = next(
+            (x, y)
+            for x in range(main.GRID_SIZE // 2, main.WIDTH, main.GRID_SIZE)
+            for y in range(main.GRID_SIZE // 2, main.HEIGHT, main.GRID_SIZE)
+            if game.can_place(x, y)
+        )
+        game.place_tower(placement)
+        self.assertEqual(len(game.towers), 1)
+        self.assertEqual(game.money, 0)
+
+        self.assertTrue(game.upgrade_tower(placement))
+        self.assertTrue(game.towers[0].shooter_immunity)
+        self.assertEqual(game.money, 0)
+
+        game.selected_tower = "warden"
+        win_tower_placement = next(
+            (x, y)
+            for x in range(main.GRID_SIZE // 2, main.WIDTH, main.GRID_SIZE)
+            for y in range(main.GRID_SIZE // 2, main.HEIGHT, main.GRID_SIZE)
+            if game.can_place(x, y)
+        )
+        game.place_tower(win_tower_placement)
+        self.assertEqual(game.towers[-1].type, "warden")
+        self.assertEqual(game.win_coins, 0)
 
     def test_developer_mode_can_drag_one_enemy(self):
         game = Game(MAPS["Classic"])
@@ -2559,10 +2615,17 @@ class SandboxModeTest(unittest.TestCase):
             game.register_key(key)
 
         self.assertTrue(game.begin_enemy_drag(original_position))
-        game.drag_enemy((original_position[0] + 35, original_position[1] + 10))
+        target_segment = 2
+        start = game.path_points[target_segment]
+        end = game.path_points[target_segment + 1]
+        target = ((start[0] + end[0]) / 2, (start[1] + end[1]) / 2 + 17)
+        game.drag_enemy(target)
         game.end_enemy_drag()
 
-        self.assertEqual((enemy.x, enemy.y), (original_position[0] + 35, original_position[1] + 10))
+        self.assertEqual(enemy.segment, target_segment)
+        self.assertEqual((enemy.x, enemy.y), ((start[0] + end[0]) / 2, start[1]))
+        enemy.update(0.1, [], [])
+        self.assertGreater(enemy.x, (start[0] + end[0]) / 2)
 
 
 if __name__ == "__main__":

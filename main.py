@@ -3497,6 +3497,7 @@ class Game:
         self.background_color = MAP_BACKGROUNDS.get(self.map_name, seasonal_background)
         self.sandbox = sandbox
         self.developer_mode = False
+        self.insta_cash = False
         self.developer_code = "sick_man"
         self.developer_buffer = ""
         self.enemies_paused = False
@@ -3717,20 +3718,27 @@ class Game:
         for tower in self.towers:
             if math.hypot(tower.x - mouse_pos[0], tower.y - mouse_pos[1]) <= 24:
                 if tower.burning_timer > 0:
-                    if self.money >= 40:
-                        self.money -= 40
+                    if self.can_afford_cash(40):
+                        self.spend_cash(40)
                         tower.burning_timer = 0.0
                         tower.burning_animation_time = 0.0
                     return True
                 if tower.shooter_immunity:
                     return False
-                if self.money < 80:
+                if not self.can_afford_cash(80):
                     return False
                 tower.shooter_immunity = True
                 self.upgraded_any_tower = True
-                self.money -= 80
+                self.spend_cash(80)
                 return True
         return False
+
+    def can_afford_cash(self, amount):
+        return self.insta_cash or self.money >= amount
+
+    def spend_cash(self, amount):
+        if not self.insta_cash:
+            self.money -= amount
 
     def upgrade_all_towers(self):
         for tower in self.towers:
@@ -3859,8 +3867,33 @@ class Game:
     def drag_enemy(self, mouse_pos):
         if not self.developer_mode or self.dragged_enemy is None:
             return
-        self.dragged_enemy.x = clamp(mouse_pos[0] + self.drag_offset[0], 0, WIDTH)
-        self.dragged_enemy.y = clamp(mouse_pos[1] + self.drag_offset[1], 0, HEIGHT)
+        target_x = clamp(mouse_pos[0] + self.drag_offset[0], 0, WIDTH)
+        target_y = clamp(mouse_pos[1] + self.drag_offset[1], 0, HEIGHT)
+        nearest_distance = float("inf")
+        nearest_segment = 0
+        nearest_point = self.path_points[0]
+        for segment, (start, end) in enumerate(zip(self.path_points, self.path_points[1:])):
+            start_x, start_y = start
+            end_x, end_y = end
+            dx, dy = end_x - start_x, end_y - start_y
+            length_squared = dx * dx + dy * dy
+            progress = 0.0 if length_squared == 0 else clamp(
+                ((target_x - start_x) * dx + (target_y - start_y) * dy) / length_squared,
+                0.0,
+                1.0,
+            )
+            point = (start_x + progress * dx, start_y + progress * dy)
+            distance = math.hypot(target_x - point[0], target_y - point[1])
+            if distance < nearest_distance:
+                nearest_distance = distance
+                nearest_segment = segment
+                nearest_point = point
+
+        self.dragged_enemy.segment = nearest_segment
+        self.dragged_enemy.x, self.dragged_enemy.y = nearest_point
+        self.dragged_enemy.falling = False
+        self.dragged_enemy.fall_target = None
+        self.dragged_enemy.earth_join_target = None
 
     def end_enemy_drag(self):
         self.dragged_enemy = None
@@ -3960,9 +3993,9 @@ class Game:
         if self.sandbox:
             self.stickman_hat_text = cleaned
             return True
-        if self.win_coins < 5:
+        if not self.can_afford_win_coins(5):
             return False
-        self.win_coins -= 5
+        self.spend_win_coins(5)
         self.stickman_hat_text = cleaned
         save_unlocks(
             self.unlocked_towers,
@@ -3981,9 +4014,9 @@ class Game:
             return False
         hat_info = STICKMAN_HATS[hat_id]
         if hat_id not in self.unlocked_stickman_hats and not self.sandbox:
-            if self.win_coins < hat_info["price"]:
+            if not self.can_afford_win_coins(hat_info["price"]):
                 return False
-            self.win_coins -= hat_info["price"]
+            self.spend_win_coins(hat_info["price"])
         self.unlocked_stickman_hats.add(hat_id)
         self.stickman_hat = hat_id
         if not self.sandbox:
@@ -4006,9 +4039,9 @@ class Game:
         if leg_id not in STICKMAN_LEGS:
             return False
         if leg_id not in self.unlocked_stickman_legs and not self.sandbox:
-            if self.win_coins < STICKMAN_LEGS[leg_id]["price"]:
+            if not self.can_afford_win_coins(STICKMAN_LEGS[leg_id]["price"]):
                 return False
-            self.win_coins -= STICKMAN_LEGS[leg_id]["price"]
+            self.spend_win_coins(STICKMAN_LEGS[leg_id]["price"])
         self.unlocked_stickman_legs.add(leg_id)
         self.stickman_legs = leg_id
         if not self.sandbox:
@@ -4032,9 +4065,9 @@ class Game:
         if suit_id not in STICKMAN_SUITS:
             return False
         if suit_id not in self.unlocked_stickman_suits and not self.sandbox:
-            if self.win_coins < STICKMAN_SUITS[suit_id]["price"]:
+            if not self.can_afford_win_coins(STICKMAN_SUITS[suit_id]["price"]):
                 return False
-            self.win_coins -= STICKMAN_SUITS[suit_id]["price"]
+            self.spend_win_coins(STICKMAN_SUITS[suit_id]["price"])
         self.unlocked_stickman_suits.add(suit_id)
         self.stickman_suit = suit_id
         if not self.sandbox:
@@ -4060,9 +4093,9 @@ class Game:
         if object_id not in STICKMAN_OBJECTS:
             return False
         if object_id not in self.unlocked_stickman_objects and not self.sandbox:
-            if self.win_coins < STICKMAN_OBJECTS[object_id]["price"]:
+            if not self.can_afford_win_coins(STICKMAN_OBJECTS[object_id]["price"]):
                 return False
-            self.win_coins -= STICKMAN_OBJECTS[object_id]["price"]
+            self.spend_win_coins(STICKMAN_OBJECTS[object_id]["price"])
         self.unlocked_stickman_objects.add(object_id)
         self.stickman_object = object_id
         if not self.sandbox:
@@ -4291,7 +4324,14 @@ class Game:
         win_cost = tower_info.get("win_cost", 0)
         if win_cost <= 0:
             return False
-        return self.win_coins >= win_cost
+        return self.can_afford_win_coins(win_cost)
+
+    def can_afford_win_coins(self, amount):
+        return self.insta_cash or self.win_coins >= amount
+
+    def spend_win_coins(self, amount):
+        if not self.insta_cash:
+            self.win_coins -= amount
 
     def buy_stickman_costume(self, costume_id):
         if costume_id not in STICKMAN_COSTUMES:
@@ -4313,9 +4353,9 @@ class Game:
             self.unlocked_stickman_costumes.add(costume_id)
             self.equipped_stickman_costume = costume_id
             return True
-        if self.win_coins < costume_info["price"]:
+        if not self.can_afford_win_coins(costume_info["price"]):
             return False
-        self.win_coins -= costume_info["price"]
+        self.spend_win_coins(costume_info["price"])
         self.unlocked_stickman_costumes.add(costume_id)
         self.equipped_stickman_costume = costume_id
         save_unlocks(
@@ -4863,39 +4903,39 @@ class Game:
         if self.selected_tower == "mine":
             if not self.is_tower_unlocked("mine"):
                 return
-            if self.money < MINE_COST:
+            if not self.can_afford_cash(MINE_COST):
                 return
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.mines.append(Mine(grid_x, grid_y))
             self.used_tower_types.add("mine")
             self.record_tower_placement()
-            self.money -= MINE_COST
+            self.spend_cash(MINE_COST)
             return
         if self.selected_tower == "walker":
             if not self.is_tower_unlocked("walker"):
                 return
-            if self.money < WALKER_COST:
+            if not self.can_afford_cash(WALKER_COST):
                 return
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.walkers.append(Walker(grid_x, grid_y, self.path_points))
             self.used_tower_types.add("walker")
             self.record_tower_placement()
-            self.money -= WALKER_COST
+            self.spend_cash(WALKER_COST)
             return
         if self.selected_tower == "gunner":
             if not self.is_tower_unlocked("gunner"):
                 return
             gunner_cost = TOWER_TYPES["gunner"]["cost"]
-            if self.money < gunner_cost:
+            if not self.can_afford_cash(gunner_cost):
                 return
             if not self.can_place_mine(grid_x, grid_y):
                 return
             self.towers.append(Tower(grid_x, grid_y, "gunner", self.path_points))
             self.used_tower_types.add("gunner")
             self.record_tower_placement()
-            self.money -= gunner_cost
+            self.spend_cash(gunner_cost)
             return
         if self.selected_tower in TOWER_TYPES and TOWER_TYPES[self.selected_tower].get("win_cost"):
             if not self.can_buy_win_tower(self.selected_tower):
@@ -4905,7 +4945,7 @@ class Game:
             self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
             self.used_tower_types.add(self.selected_tower)
             self.record_tower_placement()
-            self.win_coins -= TOWER_TYPES[self.selected_tower]["win_cost"]
+            self.spend_win_coins(TOWER_TYPES[self.selected_tower]["win_cost"])
             if self.selected_tower == "basic":
                 self.unlock_mine_tower_if_ready()
             if not self.sandbox:
@@ -4916,12 +4956,12 @@ class Game:
         if not self.can_place(grid_x, grid_y):
             return
         tower_info = TOWER_TYPES[self.selected_tower]
-        if self.money < tower_info["cost"]:
+        if not self.can_afford_cash(tower_info["cost"]):
             return
         self.towers.append(Tower(grid_x, grid_y, self.selected_tower))
         self.used_tower_types.add(self.selected_tower)
         self.record_tower_placement()
-        self.money -= tower_info["cost"]
+        self.spend_cash(tower_info["cost"])
         if self.selected_tower == "basic":
             self.unlock_mine_tower_if_ready()
 
@@ -5146,17 +5186,17 @@ class Game:
         grid_y = clamp(round(mouse_pos[1] / GRID_SIZE) * GRID_SIZE, GRID_SIZE // 2, HEIGHT - GRID_SIZE // 2)
         selected = self.selected_tower
         if selected == "mine":
-            valid = self.is_tower_unlocked(selected) and self.money >= MINE_COST and self.can_place_mine(grid_x, grid_y)
+            valid = self.is_tower_unlocked(selected) and self.can_afford_cash(MINE_COST) and self.can_place_mine(grid_x, grid_y)
         elif selected == "walker":
-            valid = self.is_tower_unlocked(selected) and self.money >= WALKER_COST and self.can_place_mine(grid_x, grid_y)
+            valid = self.is_tower_unlocked(selected) and self.can_afford_cash(WALKER_COST) and self.can_place_mine(grid_x, grid_y)
         elif selected == "gunner":
-            valid = self.is_tower_unlocked(selected) and self.money >= TOWER_TYPES[selected]["cost"] and self.can_place_mine(grid_x, grid_y)
+            valid = self.is_tower_unlocked(selected) and self.can_afford_cash(TOWER_TYPES[selected]["cost"]) and self.can_place_mine(grid_x, grid_y)
         elif selected in TOWER_TYPES and TOWER_TYPES[selected].get("win_cost"):
             valid = self.can_buy_win_tower(selected) and self.can_place(grid_x, grid_y)
         elif selected in TOWER_TYPES:
             valid = (
                 self.is_tower_unlocked(selected)
-                and self.money >= TOWER_TYPES[selected]["cost"]
+                and self.can_afford_cash(TOWER_TYPES[selected]["cost"])
                 and self.can_place(grid_x, grid_y)
             )
         else:
@@ -5255,8 +5295,8 @@ class Game:
         else:
             selected_label = "Unknown"
         status = [
-            f"Money: {self.money}",
-            f"Win coins: {self.win_coins}{' (sandbox run)' if self.sandbox else ''}",
+            f"Money: {'INFINITE' if self.insta_cash else self.money}",
+            f"Win coins: {'INFINITE' if self.insta_cash else self.win_coins}{' (sandbox run)' if self.sandbox else ''}",
             f"Lives: {self.lives}",
             f"Wave: {min(self.wave_index + 1, len(WAVES))}/{len(WAVES)}",
             f"Selected: {selected_label}",
@@ -5888,6 +5928,29 @@ def get_wiki_pages(surface_width=760):
         load_highest_cleared_wave(),
         win_coins,
     )
+    seasonal_map_notes = {
+        "present maze": "Presents can hide enemies along the Spiral route.",
+        "Gobble Gobble": "A roaming turkey can eat towers or enemies.",
+        "paint dash": "A paintball shooter periodically attacks enemies.",
+        "birthday rush": "Cake enemies periodically fall onto the Spiral route.",
+        "ThRiLlErO": "Pumpkin spotlights sweep across the map.",
+        "muddy mud": "Earth enemies periodically erupt from the ground.",
+        "homework": "Every 10 seconds, up to three enemies are frozen for three seconds.",
+        "1 fish, 2 fish, pi fish, pie fish": "Four fish periodically drop enemies, including Pi and Pie.",
+        "hat's away!": "A roaming leprechaun throws hats at enemies.",
+        "circle of lamps": "Moving lamps can set nearby towers on fire for 10 seconds.",
+        "boom boom": "Fireworks attack enemies and can chain toward towers.",
+        "Independence!": "Every 10 seconds, a Shooter can become an ally for 20 seconds.",
+        "That's the easter bunny!": "The bunny tosses eggs onto the path that hatch into Chocolate enemies.",
+    }
+    seasonal_map_entries = [
+        (
+            f"{map_name} ({seasonal_map['holiday']}) - Available: "
+            f"{seasonal_map['availability_label']}. "
+            f"{seasonal_map_notes.get(map_name, 'A holiday-themed map with special gameplay.')}"
+        )
+        for map_name, seasonal_map in SEASONAL_MAPS.items()
+    ]
     page_sections = [
         ("Basics", [
             ("Playing", [
@@ -5920,6 +5983,9 @@ def get_wiki_pages(surface_width=760):
                 for index, wave in enumerate(WAVES)
             ]),
         ]),
+        ("Seasonal Maps", [
+            ("Seasonal map guide", seasonal_map_entries),
+        ]),
         ("Extras", [
             ("Special notes", [
                 "Wave 6 introduces Lightning enemies at triple speed and Shielder enemies with orbiting projectile-blocking shields.",
@@ -5928,6 +5994,7 @@ def get_wiki_pages(surface_width=760):
                 "Wave 9 introduces Medic enemies that heal nearby allies they touch.",
                 "The Present Maze is a Christmas map available December 24-26; some enemies emerge from its present boxes.",
                 "Sandbox gives unlimited funds and lives, but does not record campaign progression.",
+                "sickman_stickman is not just something in the lore!"
             ]),
         ]),
     ]
@@ -6743,7 +6810,12 @@ DEVELOPER_CONTROL_ENEMIES = (
 DEVELOPER_CONTROLS_SIZE = (460, 555)
 
 
-def draw_developer_controls(surface, selected_enemy_type="ground", enemies_paused=False):
+def draw_developer_controls(
+    surface,
+    selected_enemy_type="ground",
+    enemies_paused=False,
+    insta_cash=False,
+):
     surface.fill((20, 27, 40))
     title = BACKSTORY_TITLE_FONT.render("Developer Controls", True, (255, 220, 110))
     surface.blit(title, (20, 16))
@@ -6776,10 +6848,18 @@ def draw_developer_controls(surface, selected_enemy_type="ground", enemies_pause
     pause_surface = FONT.render(pause_label, True, (255, 255, 255))
     surface.blit(pause_surface, pause_surface.get_rect(center=buttons["toggle_pause"].center))
 
-    buttons["move_up"] = pygame.Rect(198, 378, 64, 34)
-    buttons["move_left"] = pygame.Rect(128, 418, 64, 34)
-    buttons["move_down"] = pygame.Rect(198, 418, 64, 34)
-    buttons["move_right"] = pygame.Rect(268, 418, 64, 34)
+    buttons["toggle_insta_cash"] = pygame.Rect(20, 360, 420, 38)
+    insta_cash_color = (75, 125, 85) if insta_cash else (62, 76, 96)
+    pygame.draw.rect(surface, insta_cash_color, buttons["toggle_insta_cash"], border_radius=6)
+    pygame.draw.rect(surface, (180, 205, 220), buttons["toggle_insta_cash"], 1, border_radius=6)
+    insta_cash_label = f"Insta Cash: {'ON' if insta_cash else 'OFF'}"
+    insta_cash_surface = FONT.render(insta_cash_label, True, (255, 255, 255))
+    surface.blit(insta_cash_surface, insta_cash_surface.get_rect(center=buttons["toggle_insta_cash"].center))
+
+    buttons["move_up"] = pygame.Rect(198, 408, 64, 34)
+    buttons["move_left"] = pygame.Rect(128, 448, 64, 34)
+    buttons["move_down"] = pygame.Rect(198, 448, 64, 34)
+    buttons["move_right"] = pygame.Rect(268, 448, 64, 34)
     for action, label in (
         ("move_up", "Up"),
         ("move_left", "Left"),
@@ -6792,9 +6872,9 @@ def draw_developer_controls(surface, selected_enemy_type="ground", enemies_pause
         text = FONT.render(label, True, (255, 255, 255))
         surface.blit(text, text.get_rect(center=rect.center))
     move_hint = FONT.render("Move all living enemies", True, (190, 205, 220))
-    surface.blit(move_hint, move_hint.get_rect(center=(230, 465)))
+    surface.blit(move_hint, move_hint.get_rect(center=(230, 493)))
     drag_hint = FONT.render("You can also drag enemies in the game window.", True, (190, 205, 220))
-    surface.blit(drag_hint, drag_hint.get_rect(center=(230, 520)))
+    surface.blit(drag_hint, drag_hint.get_rect(center=(230, 530)))
     return buttons
 
 
@@ -6810,6 +6890,8 @@ def apply_developer_control_command(game, command):
         game.developer_spawn_enemy()
     elif action == "toggle_pause":
         game.toggle_enemy_pause()
+    elif action == "toggle_insta_cash":
+        game.insta_cash = not game.insta_cash
     elif action == "move":
         movement = {
             "up": (0, -20),
@@ -6829,6 +6911,7 @@ def run_developer_controls_window(connection):
     clock = pygame.time.Clock()
     selected_enemy_type = "ground"
     enemies_paused = False
+    insta_cash = False
     running = True
     while running:
         clock.tick(30)
@@ -6840,11 +6923,13 @@ def run_developer_controls_window(connection):
             if state.get("type") == "state":
                 selected_enemy_type = state["selected_enemy_type"]
                 enemies_paused = state["enemies_paused"]
+                insta_cash = state["insta_cash"]
 
         buttons = draw_developer_controls(
             pygame.display.get_surface(),
             selected_enemy_type,
             enemies_paused,
+            insta_cash,
         )
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -6861,6 +6946,9 @@ def run_developer_controls_window(connection):
                         connection.send({"action": "spawn"})
                     elif buttons["toggle_pause"].collidepoint(event.pos):
                         connection.send({"action": "toggle_pause"})
+                    elif buttons["toggle_insta_cash"].collidepoint(event.pos):
+                        connection.send({"action": "toggle_insta_cash"})
+                        insta_cash = not insta_cash
                     else:
                         for direction in ("up", "left", "down", "right"):
                             if buttons[f"move_{direction}"].collidepoint(event.pos):
@@ -7682,12 +7770,14 @@ def main():
                 controls_state = (
                     game.developer_spawn_type,
                     game.enemies_paused,
+                    game.insta_cash,
                 )
                 if controls_state != developer_controls_last_state:
                     developer_controls_connection.send({
                         "type": "state",
                         "selected_enemy_type": controls_state[0],
                         "enemies_paused": controls_state[1],
+                        "insta_cash": controls_state[2],
                     })
                     developer_controls_last_state = controls_state
             game.draw(SCREEN)
