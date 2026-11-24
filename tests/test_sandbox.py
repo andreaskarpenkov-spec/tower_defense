@@ -57,6 +57,164 @@ class SandboxModeTest(unittest.TestCase):
         self.assertTrue(main.select_phone_tower(game, "rapid"))
         self.assertEqual(game.selected_tower, "rapid")
 
+    def test_minigames_menu_shows_slot_machine_and_back_button(self):
+        surface = pygame.Surface((main.WIDTH, main.HEIGHT))
+        main.draw_map_selection(
+            surface,
+            "Classic",
+            False,
+            {"Classic", "Loop", "Cross"},
+            0,
+            set(),
+            "classic",
+        )
+        self.assertEqual(
+            surface.get_at((main.MINIGAMES_BUTTON_RECT.left + 5, main.MINIGAMES_BUTTON_RECT.top + 5))[:3],
+            (95, 105, 75),
+        )
+
+        main.draw_minigames_menu(
+            surface,
+            win_coins=20,
+            symbols=("ground", "ghost", "medic"),
+            message="Now stop slot 2.",
+            spinning=True,
+            stopped_count=1,
+            spin_phase=1,
+        )
+        self.assertEqual(surface.get_at((0, 0))[:3], (18, 24, 36))
+        self.assertEqual(
+            surface.get_at((main.MINIGAMES_BACK_RECT.left + 5, main.MINIGAMES_BACK_RECT.top + 5))[:3],
+            (85, 105, 145),
+        )
+        spinning_surface = surface.copy()
+        main.draw_minigames_menu(
+            surface,
+            win_coins=20,
+            symbols=("ground", "ghost", "medic"),
+            message="Now stop slot 2.",
+            spinning=True,
+            stopped_count=1,
+            spin_phase=0,
+        )
+        self.assertNotEqual(
+            pygame.image.tobytes(spinning_surface, "RGB"),
+            pygame.image.tobytes(surface, "RGB"),
+        )
+
+    @patch("main.save_slot_machine_balance")
+    def test_slot_machine_uses_regular_enemy_symbols_and_pays_matches(self, save_balance):
+        self.assertEqual(
+            main.SLOT_MACHINE_ENEMIES,
+            ("ground", "flyer", "shooter", "lightning", "shielder", "ghost", "medic"),
+        )
+        self.assertTrue(all(enemy_type in main.BESTIARY for enemy_type in main.SLOT_MACHINE_ENEMIES))
+        for enemy_type in main.SLOT_MACHINE_ENEMIES:
+            with self.subTest(enemy_image=enemy_type):
+                icon_surface = pygame.Surface((64, 64), pygame.SRCALPHA)
+                main.draw_slot_machine_enemy(icon_surface, enemy_type, pygame.Rect(0, 0, 64, 64))
+                self.assertTrue(any(icon_surface.get_at((x, y)).a for x in range(64) for y in range(64)))
+
+        two_match_rng = Mock()
+        two_match_rng.choice.side_effect = ("ground", "ground", "flyer")
+        balance, symbols, message, spinning = main.start_slot_machine(
+            50, {"Classic", "Loop", "Cross"}, two_match_rng
+        )
+        self.assertEqual(balance, 40)
+        self.assertEqual(symbols, ("ground", "ground", "flyer"))
+        self.assertTrue(spinning)
+        self.assertIn("slot 1", message)
+
+        stopped_count = 0
+        for expected_stop in (1, 2):
+            balance, stopped_count, message, completed = main.stop_slot_machine(
+                symbols, stopped_count, balance, {"Classic", "Loop", "Cross"}
+            )
+            self.assertEqual(stopped_count, expected_stop)
+            self.assertFalse(completed)
+            self.assertIn(f"slot {expected_stop + 1}", message)
+        balance, stopped_count, message, completed = main.stop_slot_machine(
+            symbols, stopped_count, balance, {"Classic", "Loop", "Cross"}
+        )
+        self.assertEqual(balance, 50)
+        self.assertEqual(stopped_count, 3)
+        self.assertTrue(completed)
+        self.assertIn("10 win coins", message)
+
+        three_match_rng = Mock()
+        three_match_rng.choice.side_effect = ("ghost", "ghost", "ghost")
+        balance, symbols, message, spinning = main.start_slot_machine(
+            50, {"Classic", "Loop", "Cross"}, three_match_rng
+        )
+        self.assertEqual(balance, 40)
+        self.assertEqual(symbols, ("ghost", "ghost", "ghost"))
+        self.assertTrue(spinning)
+        stopped_count = 0
+        for _ in range(3):
+            balance, stopped_count, message, completed = main.stop_slot_machine(
+                symbols, stopped_count, balance, {"Classic", "Loop", "Cross"}
+            )
+        self.assertEqual(balance, 60)
+        self.assertTrue(completed)
+        self.assertIn("20 win coins", message)
+
+        no_match_symbols = ("ground", "flyer", "medic")
+        balance = 40
+        stopped_count = 0
+        for _ in range(3):
+            balance, stopped_count, message, completed = main.stop_slot_machine(
+                no_match_symbols, stopped_count, balance, {"Classic", "Loop", "Cross"}
+            )
+        self.assertEqual(balance, 40)
+        self.assertTrue(completed)
+        self.assertIn("No match", message)
+
+        balance, symbols, message, spinning = main.start_slot_machine(
+            9, {"Classic", "Loop", "Cross"}, Mock()
+        )
+        self.assertEqual(balance, 9)
+        self.assertEqual(symbols, (None, None, None))
+        self.assertFalse(spinning)
+        self.assertIn("need 10", message)
+
+        reels = ("ground", "flyer", "medic")
+        reel_rng = Mock()
+        reel_rng.choice.side_effect = ("ghost", "lightning")
+        self.assertEqual(
+            main.advance_slot_machine_reels(reels, 1, reel_rng),
+            ("ground", "ghost", "lightning"),
+        )
+
+    def test_slot_machine_saves_the_updated_win_coin_balance(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as save_file:
+            json.dump({"unlocked_towers": ["basic"], "win_coins": 10}, save_file)
+            save_path = save_file.name
+
+        original_save_file = main.SAVE_FILE
+        main.SAVE_FILE = save_path
+        try:
+            rng = Mock()
+            rng.choice.side_effect = ("ghost", "ground", "medic")
+            balance, symbols, _, spinning = main.start_slot_machine(
+                10, {"Classic", "Loop", "Cross"}, rng
+            )
+            self.assertEqual(balance, 0)
+            self.assertTrue(spinning)
+            self.assertEqual(main.load_progress()[1], 0)
+            symbols = ("ghost", "ghost", "ghost")
+            stopped_count = 0
+            for _ in range(3):
+                balance, stopped_count, _, completed = main.stop_slot_machine(
+                    symbols, stopped_count, balance, {"Classic", "Loop", "Cross"}
+                )
+            self.assertEqual(balance, 20)
+            self.assertTrue(completed)
+            self.assertEqual(main.load_progress()[1], 20)
+        finally:
+            main.SAVE_FILE = original_save_file
+            if os.path.exists(save_path):
+                os.remove(save_path)
+
     def test_phone_touch_events_convert_to_clicks_and_drag_motion(self):
         down = pygame.event.Event(
             pygame.FINGERDOWN,

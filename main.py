@@ -924,6 +924,10 @@ BACKSTORY_STORY_LINES = (
 )
 HOME_COSTUMES_RECT = pygame.Rect(240, 390, 180, 42)
 SEASONAL_MAPS_BUTTON_RECT = pygame.Rect(240, 445, 180, 42)
+MINIGAMES_BUTTON_RECT = pygame.Rect(240, 500, 180, 42)
+MINIGAMES_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
+SLOT_MACHINE_SPIN_RECT = pygame.Rect(WIDTH // 2 - 110, 430, 220, 48)
+SLOT_MACHINE_ENEMIES = ("ground", "flyer", "shooter", "lightning", "shielder", "ghost", "medic")
 SEASONAL_MAPS_BACK_RECT = pygame.Rect(40, HEIGHT - 62, 150, 40)
 SEASONAL_MAPS_DATE_RECT = pygame.Rect(WIDTH - 220, 28, 180, 38)
 SEASONAL_MAPS_VIEWPORT_RECT = pygame.Rect(
@@ -5705,6 +5709,131 @@ def draw_seasonal_maps_button(surface):
     )
 
 
+def draw_minigames_button(surface):
+    pygame.draw.rect(surface, (95, 105, 75), MINIGAMES_BUTTON_RECT, border_radius=7)
+    pygame.draw.rect(surface, (195, 220, 155), MINIGAMES_BUTTON_RECT, 2, border_radius=7)
+    label = FONT.render("Minigames", True, (255, 255, 255))
+    surface.blit(label, label.get_rect(center=MINIGAMES_BUTTON_RECT.center))
+
+
+def save_slot_machine_balance(win_coins, unlocked_maps):
+    save_unlocks(
+        load_unlocks(),
+        win_coins,
+        unlocked_maps,
+        highest_cleared_wave=load_highest_cleared_wave(),
+    )
+
+
+def start_slot_machine(win_coins, unlocked_maps, rng=None):
+    if win_coins < 10:
+        return win_coins, (None, None, None), "You need 10 win coins to play.", False
+    rng = rng or random
+    symbols = tuple(rng.choice(SLOT_MACHINE_ENEMIES) for _ in range(3))
+    win_coins -= 10
+    save_slot_machine_balance(win_coins, unlocked_maps)
+    return win_coins, symbols, "Stop slot 1, then stop slots 2 and 3.", True
+
+
+def advance_slot_machine_reels(symbols, stopped_count, rng=None):
+    rng = rng or random
+    symbols = list(symbols)
+    for index in range(stopped_count, 3):
+        symbols[index] = rng.choice(SLOT_MACHINE_ENEMIES)
+    return tuple(symbols)
+
+
+def stop_slot_machine(symbols, stopped_count, win_coins, unlocked_maps):
+    if stopped_count >= 3:
+        return win_coins, stopped_count, "Spin again for 10 win coins.", False
+    stopped_count += 1
+    if stopped_count < 3:
+        return win_coins, stopped_count, f"Now stop slot {stopped_count + 1}.", False
+
+    if symbols[0] == symbols[1] == symbols[2]:
+        payout = 20
+        message = "Three matching! You won 20 win coins!"
+    elif len(set(symbols)) == 2:
+        payout = 10
+        message = "Two matching! You won 10 win coins!"
+    else:
+        payout = 0
+        message = "No match. Try again!"
+    win_coins += payout
+    if payout:
+        save_slot_machine_balance(win_coins, unlocked_maps)
+    return win_coins, stopped_count, message, True
+
+
+def draw_minigames_menu(
+    surface,
+    win_coins=0,
+    symbols=(None, None, None),
+    message="",
+    spinning=False,
+    stopped_count=0,
+    spin_phase=0,
+):
+    surface.fill((18, 24, 36))
+    title = BACKSTORY_TITLE_FONT.render("Minigames", True, (255, 225, 145))
+    surface.blit(title, title.get_rect(center=(WIDTH // 2, 100)))
+    slot_title = FONT.render("Enemy Slot Machine - 10 win coins per play", True, (205, 215, 230))
+    surface.blit(slot_title, slot_title.get_rect(center=(WIDTH // 2, 160)))
+    balance = FONT.render(f"Win coins: {win_coins}", True, (255, 220, 120))
+    surface.blit(balance, balance.get_rect(center=(WIDTH // 2, 205)))
+
+    slot_width, slot_height = 112, 90
+    slot_gap = 22
+    first_slot_x = (WIDTH - (3 * slot_width + 2 * slot_gap)) // 2
+    for index, enemy_type in enumerate(symbols):
+        rect = pygame.Rect(
+            first_slot_x + index * (slot_width + slot_gap),
+            245,
+            slot_width,
+            slot_height,
+        )
+        is_rolling = spinning and index >= stopped_count
+        border_color = (255, 230, 120) if is_rolling and spin_phase % 2 else (205, 190, 130)
+        pygame.draw.rect(surface, (45, 54, 72), rect, border_radius=8)
+        pygame.draw.rect(surface, border_color, rect, 3, border_radius=8)
+        if enemy_type in SLOT_MACHINE_ENEMIES:
+            draw_slot_machine_enemy(surface, enemy_type, rect)
+        else:
+            question = BACKSTORY_TITLE_FONT.render("?", True, (200, 210, 225))
+            surface.blit(question, question.get_rect(center=rect.center))
+        if spinning:
+            reel_label = "STOPPED" if index < stopped_count else "SPINNING"
+        else:
+            reel_label = f"SLOT {index + 1}"
+        label = FONT.render(reel_label, True, (200, 210, 225))
+        surface.blit(label, label.get_rect(center=(rect.centerx, 355)))
+
+    if spinning:
+        spin_label_text = f"STOP SLOT {stopped_count + 1}"
+    else:
+        spin_label_text = "SPIN - 10 WIN COINS"
+    pygame.draw.rect(surface, (105, 78, 125), SLOT_MACHINE_SPIN_RECT, border_radius=7)
+    pygame.draw.rect(surface, (210, 175, 235), SLOT_MACHINE_SPIN_RECT, 2, border_radius=7)
+    spin_label = FONT.render(spin_label_text, True, (255, 255, 255))
+    surface.blit(spin_label, spin_label.get_rect(center=SLOT_MACHINE_SPIN_RECT.center))
+    if message:
+        result = FONT.render(message, True, (255, 225, 145))
+        surface.blit(result, result.get_rect(center=(WIDTH // 2, 510)))
+
+    pygame.draw.rect(surface, (85, 105, 145), MINIGAMES_BACK_RECT, border_radius=7)
+    pygame.draw.rect(surface, (180, 205, 245), MINIGAMES_BACK_RECT, 2, border_radius=7)
+    back_label = FONT.render("Back", True, (255, 255, 255))
+    surface.blit(back_label, back_label.get_rect(center=MINIGAMES_BACK_RECT.center))
+
+
+def draw_slot_machine_enemy(surface, enemy_type, rect):
+    icon = pygame.Surface((64, 64), pygame.SRCALPHA)
+    enemy = Enemy(MAPS["Classic"], speed=0, hp=100, reward=0, enemy_type=enemy_type)
+    enemy.x, enemy.y = 32, 34
+    enemy.draw(icon)
+    surface.blit(icon, icon.get_rect(center=rect.center))
+
+
 def bestiary_scroll_limit(surface_height):
     content_bottom = 92 + (len(BESTIARY) - 1) * 90 + 76
     return max(0, content_bottom - (surface_height - 14))
@@ -6639,6 +6768,7 @@ def draw_map_selection(
         draw_bestiary_button(surface)
         draw_wiki_button(surface)
         draw_seasonal_maps_button(surface)
+        draw_minigames_button(surface)
         if phone_mode:
             pygame.draw.rect(surface, (63, 128, 88), PHONE_START_BUTTON_RECT, border_radius=7)
             pygame.draw.rect(surface, (165, 230, 180), PHONE_START_BUTTON_RECT, 2, border_radius=7)
@@ -7130,12 +7260,19 @@ def main():
     backstory_time = 0.0
     show_costume_window = False
     show_seasonal_menu = False
+    show_minigames_menu = False
     seasonal_date = date.today()
     seasonal_calendar_month = seasonal_date.replace(day=1)
     seasonal_maps_scroll_offset = 0
     seasonal_code_buffer = ""
     seasonal_date_panel_open = False
     seasonal_date_buttons = {}
+    minigames_symbols = (None, None, None)
+    minigames_message = ""
+    minigames_spinning = False
+    minigames_stopped_count = 0
+    minigames_spin_timer = 0.0
+    minigames_spin_phase = 0
     preview_costume = menu_equipped_costume
     running = True
     menu_costume_buttons = {}
@@ -7282,6 +7419,34 @@ def main():
                                 seasonal_maps_scroll_offset + scroll_step,
                             )
                         continue
+                    if show_minigames_menu:
+                        if event.key == pygame.K_ESCAPE:
+                            show_minigames_menu = False
+                        elif event.key == pygame.K_RETURN:
+                            if minigames_spinning:
+                                (
+                                    menu_win_coins,
+                                    minigames_stopped_count,
+                                    minigames_message,
+                                    round_complete,
+                                ) = stop_slot_machine(
+                                    minigames_symbols,
+                                    minigames_stopped_count,
+                                    menu_win_coins,
+                                    unlocked_maps,
+                                )
+                                minigames_spinning = not round_complete
+                            else:
+                                (
+                                    menu_win_coins,
+                                    minigames_symbols,
+                                    minigames_message,
+                                    minigames_spinning,
+                                ) = start_slot_machine(menu_win_coins, unlocked_maps)
+                                minigames_stopped_count = 0
+                                minigames_spin_timer = 0.0
+                                minigames_spin_phase = 0
+                        continue
                     if show_costume_window and menu_hat_text_editing:
                         if event.key == pygame.K_ESCAPE:
                             menu_hat_text_editing = False
@@ -7416,6 +7581,33 @@ def main():
                                         tower_directory_process, game.sandbox
                                     )
                                     break
+                    elif show_minigames_menu:
+                        if SLOT_MACHINE_SPIN_RECT.collidepoint(event.pos):
+                            if minigames_spinning:
+                                (
+                                    menu_win_coins,
+                                    minigames_stopped_count,
+                                    minigames_message,
+                                    round_complete,
+                                ) = stop_slot_machine(
+                                    minigames_symbols,
+                                    minigames_stopped_count,
+                                    menu_win_coins,
+                                    unlocked_maps,
+                                )
+                                minigames_spinning = not round_complete
+                            else:
+                                (
+                                    menu_win_coins,
+                                    minigames_symbols,
+                                    minigames_message,
+                                    minigames_spinning,
+                                ) = start_slot_machine(menu_win_coins, unlocked_maps)
+                                minigames_stopped_count = 0
+                                minigames_spin_timer = 0.0
+                                minigames_spin_phase = 0
+                        elif MINIGAMES_BACK_RECT.collidepoint(event.pos):
+                            show_minigames_menu = False
                     elif show_costume_window:
                         if HOME_COSTUME_CLOSE_RECT.collidepoint(event.pos):
                             show_costume_window = False
@@ -7593,6 +7785,12 @@ def main():
                         backstory_time = 0.0
                     elif SEASONAL_MAPS_BUTTON_RECT.collidepoint(event.pos):
                         show_seasonal_menu = True
+                    elif MINIGAMES_BUTTON_RECT.collidepoint(event.pos):
+                        show_minigames_menu = True
+                        if not minigames_spinning:
+                            minigames_symbols = (None, None, None)
+                            minigames_stopped_count = 0
+                            minigames_message = "Match 2: +10 win coins | Match 3: +20 win coins"
                     elif ACHIEVEMENTS_BUTTON_RECT.collidepoint(event.pos):
                         if achievements_process is None or achievements_process.poll() is not None:
                             achievements_process = open_achievements_window()
@@ -7663,6 +7861,16 @@ def main():
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and not in_menu:
                 game.end_enemy_drag()
 
+        if in_menu and show_minigames_menu and minigames_spinning:
+            minigames_spin_timer += dt
+            if minigames_spin_timer >= 0.08:
+                minigames_spin_timer %= 0.08
+                minigames_symbols = advance_slot_machine_reels(
+                    minigames_symbols,
+                    minigames_stopped_count,
+                )
+                minigames_spin_phase += 1
+
         if game is not developer_controls_game:
             close_developer_controls_window(
                 developer_controls_process,
@@ -7731,6 +7939,18 @@ def main():
                     SCREEN,
                     seasonal_date,
                     seasonal_maps_scroll_offset,
+                )
+            elif show_minigames_menu:
+                menu_seasonal_map_buttons = {}
+                menu_costume_buttons = {}
+                draw_minigames_menu(
+                    SCREEN,
+                    win_coins=menu_win_coins,
+                    symbols=minigames_symbols,
+                    message=minigames_message,
+                    spinning=minigames_spinning,
+                    stopped_count=minigames_stopped_count,
+                    spin_phase=minigames_spin_phase,
                 )
             else:
                 menu_seasonal_map_buttons = {}
